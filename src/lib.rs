@@ -32,8 +32,9 @@ pub struct Ebnf<'a> {
 impl<'a> fmt::Show for Ebnf<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "Ebnf {{ title: {}, productions: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
-        for (&id, &p) in self.productions.iter() {
-            try!(write!(f, "{} ({}): {}.\n", id.as_str_ascii(), p.as_ptr(), p.iter().map( |f| f.to_string()).collect::<Vec<_>>().connect(" ")));
+        for (&id, &e) in self.productions.iter() {
+            try!(write!(f, "<{}> {}: ", e.as_ptr(), id.as_str_ascii()));
+            try!(show_expr(f, "", e, ".\n"));
         }
         write!(f, "}}, comment: {} }}", self.comment.as_ref().map( |s| s.as_str_ascii() ))
     }
@@ -52,14 +53,39 @@ pub enum Factor<'a> {
     Group(Expr<'a>),
 }
 
+fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
+    fn show_term(f: &mut fmt::Formatter, t: &Term) -> fmt::Result {
+        let mut iter = t.iter();
+        match iter.next() {
+            Some(factor) => try!(write!(f, "{}", factor)),
+            None => return Ok(())
+        }
+        for factor in iter {
+            try!(write!(f, " {}", factor));
+        }
+        Ok(())
+    }
+    let mut iter = e.iter();
+    try!(write!(f, "{}", l));
+    match iter.next() {
+        Some(term) => try!(show_term(f, term)),
+        None => return Ok(())
+    }
+    for term in iter {
+        try!(write!(f, " | "));
+        try!(show_term(f, term))
+    }
+    write!(f, "{}", r)
+}
+
 impl<'a> fmt::Show for Factor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Ref(e) => write!(f, "Ref {}", e.as_ptr() ),
+            Ref(e) => write!(f, "Ref {}", e.as_ptr()),
             Lit(s) => write!(f, "\"{}\"", s.as_str_ascii().escape_default()),
-            Opt(e) => write!(f, "[ {} ]", e.iter().map( |f| f.to_string()).collect::<Vec<_>>().connect(" | ")),
-            Rep(e) => write!(f, "{{ {} }}", e.iter().map( |f| f.to_string()).collect::<Vec<_>>().connect(" | ")),
-            Group(e) => write!(f, "( {} )", e.iter().map( |f| f.to_string()).collect::<Vec<_>>().connect(" | ")),
+            Opt(e) => show_expr(f, "[ ", e, " ]"),
+            Rep(e) => show_expr(f, "{ ", e, " }"),
+            Group(e) => show_expr(f, "( ", e, " )"),
         }
     }
 }
@@ -128,9 +154,9 @@ const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
 fn bench_decode(b: &mut test::Bencher)
 {
     //let string = EBNF_EBNF_STRING.to_ascii();
-    let string = ASN1_EBNF_STRING
+    let string = //ASN1_EBNF_STRING
                  //ASN1_EBNF_STRING
-                 //ONE_LINE_EBNF_STRING
+                 ONE_LINE_EBNF_STRING
                  .to_ascii();
     let ref mut parser = Parser::new();
     let ref ctx = ParserContext::new();
@@ -141,19 +167,23 @@ fn bench_decode(b: &mut test::Bencher)
 
 #[test]
 fn it_works() {
-    // let ref ctx = ParserContext::new(); // Can put this either here...
+    //let mut ctx = ParserContext::new(); // Can put this either here...
     let string = //EBNF_EBNF_STRING
-                 ASN1_EBNF_STRING
+                ASN1_EBNF_STRING
                  //ONE_LINE_EBNF_STRING
                  .to_ascii();
     let mut parser = Parser::new();
     for _ in range(0, 1000u) {
-        let arena = ParserContext::new(); // or here...
-        let foo = match try_decode(&mut parser, &arena, string) {
+        let ctx = ParserContext::new(); // or here...
+        let foo = match try_decode(&mut parser, &ctx, string) {
             Ok(c) => {println!("{}", c); c }
             Err(e) => //{println!("{}", e); break },
                     fail!("{}", e),
         };
+        /*for _ in range(0u16, 1000) {
+            let ctx = ParserContext::new(); // or here...
+            let _ = try_decode(&mut parser, &ctx, string);
+        }*/
         break;
         //arena = ParserContext::new(); // or here...
         //println!("{}", foo);
