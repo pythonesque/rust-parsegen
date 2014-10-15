@@ -35,13 +35,16 @@ impl<'a> Tokens<'a> {
     }
 
     // This is where the lexing happens.  Note that it does not handle string escaping.
+    #[inline]
     pub fn next(&mut self) -> Token<'a> {
         loop {
             unsafe {
                 if self.ptr == self.end {
                     return EOF
                 } else {
-                    let new = match (*self.ptr).to_byte() {
+                    let old = self.ptr;
+                    self.ptr = self.ptr.offset(1);
+                    let new = match (*old).to_byte() {
                         b'=' => Equals,
                         b'|' => VBar,
                         b'(' => LParen,
@@ -53,58 +56,62 @@ impl<'a> Tokens<'a> {
                         b'.' | b';' => Semi,
                         // Double quoted literal start
                         b'"' => {
-                            let mut len = 1;
+                            let start = self.ptr;
+                            let mut old;
                             loop {
-                                let end = self.ptr.offset(len as int);
-                                if end == self.end { return UnterminatedStringLiteral }
-                                else if (*end).to_byte() == b'"' { break }
-                                else { len += 1 }
+                                old = self.ptr;
+                                if old == self.end { return UnterminatedStringLiteral }
+                                self.ptr = self.ptr.offset(1);
+                                if (*old).to_byte() == b'"' { break }
                             }
-                            let lit = Lit(mem::transmute(Slice { data: self.ptr.offset(1), len: len - 1}));
-                            self.ptr = self.ptr.offset(len as int + 1);
-                            return lit
+                            let len = old.to_uint() - start.to_uint();
+                            Lit(mem::transmute(Slice { data: start, len: len  }))
                         },
                         // Single quoted literal start
                         b'\'' => {
-                            let mut len = 1;
+                            let start = self.ptr;
+                            let mut old;
                             loop {
-                                let end = self.ptr.offset(len as int);
-                                if end == self.end { return UnterminatedStringLiteral }
-                                else if (*end).to_byte() == b'\'' { break }
-                                else { len += 1 }
+                                old = self.ptr;
+                                if old == self.end { return UnterminatedStringLiteral }
+                                self.ptr = self.ptr.offset(1);
+                                if (*old).to_byte() == b'\'' { break }
                             }
-                            let lit = Lit(mem::transmute(Slice { data: self.ptr.offset(1), len: len - 1}));
-                            self.ptr = self.ptr.offset(len as int + 1);
-                            return lit;
+                            let len = old.to_uint() - start.to_uint();
+                            Lit(mem::transmute(Slice { data: start, len: len }))
                         },
                         // Skip whitespace.  This could probably be made more efficient.
                         b' ' | b'\x09' ... b'\x0d' => {
-                            self.ptr = self.ptr.offset(1);
                             continue
                         },
                         // Identifier start
                         _ => {
-                            let mut len = 1;
-                            loop {
-                                let end = self.ptr.offset(len as int);
-                                if end == self.end {
-                                    let id = Ident(mem::transmute(Slice { data: self.ptr, len: len }));
-                                    self.ptr = self.end;
-                                    return id;
-                                }
-                                match (*end).to_byte() {
-                                    b'=' | b'|' | b'(' | b')' | b'{' | b'}' | b'[' | b']' |
-                                    b'.' | b';' | b'"' | b'\'' | b' ' | b'\x09' ... b'\x0d' => {
-                                        break },
-                                    _ => { len += 1 }
-                                }
+                            while self.ptr != self.end {
+                                static TBL: [bool, .. 256 as uint] = [
+ false, false, false, false, false, false, false, false, false, true,  true,  true,  true,  true,  false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ true,  false, true,  false, false, false, false, true,  true,  true,  false, false, false, false, true,  false,
+ false, false, false, false, false, false, false, false, false, false, false, true,  false, true,  false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, true,  false, true,  false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, true,  true,  true,  false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+ false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+                            ];
+                                if *TBL.unsafe_get((*self.ptr).to_byte() as uint) { break }
+                                self.ptr = self.ptr.offset(1);
                             }
-                            let id = Ident(mem::transmute(Slice { data: self.ptr, len: len }));
-                            self.ptr = self.ptr.offset(len as int);
-                            return id
+                            let len = self.ptr.to_uint() - old.to_uint();
+                            Ident(mem::transmute(Slice { data: old, len: len }))
                         },
                     };
-                    self.ptr = self.ptr.offset(1);
                     return mem::transmute(new)
                 }
             }

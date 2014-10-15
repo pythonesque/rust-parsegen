@@ -155,10 +155,10 @@ fn bench_decode(b: &mut test::Bencher)
 {
     //let string = EBNF_EBNF_STRING.to_ascii();
     let string = //ASN1_EBNF_STRING
-                 //ASN1_EBNF_STRING
-                 ONE_LINE_EBNF_STRING
+                 ASN1_EBNF_STRING
+                 //ONE_LINE_EBNF_STRING
                  .to_ascii();
-    let ref mut parser = Parser::new();
+    let ref mut parser = Parser::with_capacity(1024);
     let ref ctx = ParserContext::new();
     b.iter(|| {
         try_decode(parser, ctx, string).unwrap();

@@ -4,7 +4,8 @@ use scanner::Tokens;
 use arena::TypedArena;
 use std::cell::UnsafeCell;
 use std::collections::hashmap;
-use rustc::util::nodemap::FnvHashMap;
+use std::collections::hashmap::HashMap;
+use rustc::util::nodemap::{FnvHashMap, FnvHasher};
 use std::mem;
 
 type ParseExpr<'a> = &'a [ParseTerm<'a>];
@@ -40,6 +41,7 @@ impl<'a> ParserContext<'a> {
 
 // Parse context, holds information required by the parser (and owns any allocations it makes)
 pub struct Parser<'a> {
+    capacity: uint, // Guess at how many symbols to parse,
     stack: Vec<(Vec<ParseTerm<'a>>, ParseTerm<'a>, ExprType)> // Stored in the parse context so its allocation is reusable.
 }
 
@@ -123,7 +125,11 @@ macro_rules! parse_expression {
 impl<'a> Parser<'a> {
     // Create a new parse context from a given string
     pub fn new() -> Parser<'a> {
-        Parser { stack: Vec::new() }
+        Parser::with_capacity(hashmap::INITIAL_CAPACITY)
+    }
+
+    pub fn with_capacity(capacity: uint) -> Parser<'a> {
+        Parser { stack: Vec::new(), capacity: capacity }
     }
 
     fn lock<'b, 'c>(&'c mut self) -> ParserGuard<'a, 'b, 'c> {
@@ -142,7 +148,7 @@ impl<'a> Parser<'a> {
         let ParserContext { ref arena } = *ctx;
         let mut ctx = self.lock();
         let ctx = ctx.deref_mut();
-        let Parser { ref mut stack } = *ctx;
+        let Parser { ref mut stack , capacity } = *ctx;
         let mut tokens = Tokens::new(string);
         let (title, next) = match tokens.next() {
             s::Lit(title) => { (Some(title), tokens.next()) },
@@ -151,7 +157,7 @@ impl<'a> Parser<'a> {
         };
         if next != s::LBrace { return Err(::ExpectedLBrace) }
 
-        let mut productions: FnvHashMap<&[Ascii], ParseExpr> = FnvHashMap::new();
+        let mut productions: FnvHashMap<&[Ascii], ParseExpr> = HashMap::with_capacity_and_hasher(capacity, FnvHasher);
         loop {
             match tokens.next() {
                 s::Ident(id) => {
