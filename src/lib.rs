@@ -42,7 +42,7 @@ impl<'a> fmt::Show for Ebnf<'a> {
 
 pub type Expr<'a> = &'a [Term<'a>];
 
-pub type Term<'a> = Vec<Factor<'a>>;
+pub type Term<'a> = &'a [Factor<'a>];
 
 #[deriving(PartialEq)]
 pub enum Factor<'a> {
@@ -158,8 +158,10 @@ fn bench_decode(b: &mut test::Bencher)
                  ASN1_EBNF_STRING
                  //ONE_LINE_EBNF_STRING
                  .to_ascii();
+    /*let ref mut parser = Parser::with_capacity(1024);
+    let ref ctx = ParserContext::new(8192);*/
     let ref mut parser = Parser::with_capacity(1024);
-    let ref ctx = ParserContext::new();
+    let ref ctx = ParserContext::new(8192);
     b.iter(|| {
         try_decode(parser, ctx, string).unwrap();
     })
@@ -172,9 +174,11 @@ fn it_works() {
                 ASN1_EBNF_STRING
                  //ONE_LINE_EBNF_STRING
                  .to_ascii();
-    let mut parser = Parser::new();
+    //let mut parser = Parser::new();
+    let mut parser = Parser::with_capacity(1024);
     for _ in range(0, 1000u) {
-        let ctx = ParserContext::new(); // or here...
+        //let ctx = ParserContext::new(8); // or here...
+        let ctx = ParserContext::new(8192);
         let foo = match try_decode(&mut parser, &ctx, string) {
             Ok(c) => {println!("{}", c); c }
             Err(e) => //{println!("{}", e); break },

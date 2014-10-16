@@ -35,7 +35,7 @@ impl<'a> Tokens<'a> {
     }
 
     // This is where the lexing happens.  Note that it does not handle string escaping.
-    #[inline]
+    #[inline(always)]
     pub fn next(&mut self) -> Token<'a> {
         loop {
             unsafe {

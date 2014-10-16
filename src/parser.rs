@@ -2,15 +2,17 @@ use scanner as s;
 use scanner::Tokens;
 
 use arena::TypedArena;
+use rustc::util::nodemap::{FnvHashMap, FnvHasher};
 use std::cell::UnsafeCell;
+use std::cmp;
 use std::collections::hashmap;
 use std::collections::hashmap::HashMap;
-use rustc::util::nodemap::{FnvHashMap, FnvHasher};
 use std::mem;
+use std::slice::BoxedSlice;
 
 type ParseExpr<'a> = &'a [ParseTerm<'a>];
 
-type ParseTerm<'a> = Vec<UnsafeCell<ParseFactor<'a>>>;
+type ParseTerm<'a> = &'a [UnsafeCell<ParseFactor<'a>>];
 
 enum ParseFactor<'a> {
     Ident(&'a [Ascii]),
@@ -28,13 +30,21 @@ enum ExprType {
 }
 
 pub struct ParserContext<'a> {
-    arena: TypedArena<Vec<ParseTerm<'a>>>,
+    factors: TypedArena<[UnsafeCell<ParseFactor<'a>>, .. STACK_VEC_MAX]>,
+    vec_factors: TypedArena<UnsafeCell<Vec<UnsafeCell<ParseFactor<'a>>>>>,
+    terms: TypedArena<[ParseTerm<'a>, .. STACK_VEC_MAX]>,
+    vec_terms: TypedArena<UnsafeCell<Vec<ParseTerm<'a>>>>,
 }
 
+pub static MIN_PARSER_CONTEXT_CAPACITY: uint = 8;
+
 impl<'a> ParserContext<'a> {
-    pub fn new() -> ParserContext<'a> {
+    pub fn new(capacity: uint) -> ParserContext<'a> {
         ParserContext {
-            arena: TypedArena::new(),
+            factors: TypedArena::with_capacity(cmp::max(MIN_PARSER_CONTEXT_CAPACITY, capacity)),
+            vec_factors: TypedArena::with_capacity(cmp::max(MIN_PARSER_CONTEXT_CAPACITY, capacity >> 2)),
+            terms: TypedArena::with_capacity(cmp::max(MIN_PARSER_CONTEXT_CAPACITY, capacity >> 4)),
+            vec_terms: TypedArena::with_capacity(cmp::max(MIN_PARSER_CONTEXT_CAPACITY, capacity >> 6)),
         }
     }
 }
@@ -42,14 +52,60 @@ impl<'a> ParserContext<'a> {
 // Parse context, holds information required by the parser (and owns any allocations it makes)
 pub struct Parser<'a> {
     capacity: uint, // Guess at how many symbols to parse,
-    stack: Vec<(Vec<ParseTerm<'a>>, ParseTerm<'a>, ExprType)> // Stored in the parse context so its allocation is reusable.
+    stack: Vec<(StackVec<'a, ParseTerm<'a>>, StackVec<'a, UnsafeCell<ParseFactor<'a>>>, ExprType)> // Stored in the parse context so its allocation is reusable.
 }
 
+const STACK_VEC_MAX: uint = 4;
+
+struct StackVec<'a, T> where T: 'a {
+    vec: &'a mut Vec<T>,
+    len: uint,
+    stk: [T, .. STACK_VEC_MAX],
+}
+
+impl<'a,T> StackVec<'a, T> where T: 'a {
+    #[inline(always)]
+    fn push<'b>(&'b mut self, value: T, arena: &'a TypedArena<UnsafeCell<Vec<T>>>) {
+        const STACK_VEC_LAST: uint = STACK_VEC_MAX - 1;
+        #[allow(dead_code)] const STACK_VEC_PENULTIMATE: uint = STACK_VEC_LAST - 1;
+        match self.len {
+            l @ 0 ... STACK_VEC_PENULTIMATE => {
+                self.stk[l] = value;
+                self.len += 1;
+            },
+            STACK_VEC_LAST => {
+                self.stk[STACK_VEC_LAST] = value;
+                let stk = mem::replace(&mut self.stk, unsafe { mem::uninitialized() });
+                let vec_box: Box<[T]> = box stk;
+                self.vec = unsafe { &mut *arena.alloc(UnsafeCell::new(vec_box.into_vec())).get() };
+                self.len += 1;
+            },
+            _ => self.vec.push(value),
+        }
+    }
+
+    #[inline(always)]
+    fn into_slice(mut self, arena: &'a TypedArena<[T, .. STACK_VEC_MAX]>) -> Option<&'a [T]> {
+        match self.len {
+            0 => None,
+            STACK_VEC_MAX => {
+                let vec = mem::replace(&mut self.vec, unsafe { mem::uninitialized() });
+                Some(vec.as_slice())
+            },
+            l => {
+                let stk = mem::replace(&mut self.stk, unsafe { mem::uninitialized() });
+                Some(arena.alloc(stk).as_slice()[ .. l])
+            },
+        }
+    }
+}
+
+
 macro_rules! parse_factor {
-    ($tokens:expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt)|*) => {
+    ($tokens:expr, $ctx:expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt)|*) => {{
         match $tokens.next() {
-            s::Ident(i) => $factors.push(UnsafeCell::new(Ident(i))),
-            s::Lit(l) => $factors.push(UnsafeCell::new(Lit(l))),
+            s::Ident(i) =>$factors.push(UnsafeCell::new(Ident(i)), &$ctx.vec_factors),
+            s::Lit(l) => $factors.push(UnsafeCell::new(Lit(l)), &$ctx.vec_factors),
             s::LBracket => {
                 $stack.push(($terms, $factors, $term));
                 $term = OptEnd;
@@ -72,27 +128,28 @@ macro_rules! parse_factor {
             _ => return Err(::ExpectedFactorOrEnd),
         }
     }
-}
+}}
 
 macro_rules! parse_terms {
-    ($tokens:expr, $arena: expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
+    ($tokens:expr, $ctx: expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
         'term: loop {
             // Parse first factor
-            if $factors.is_empty() {
-                parse_factor!($tokens, $stack, $terms, $factors, $term, $cont_lifetime, );
+            if $factors.len == 0 {
+                parse_factor!($tokens, $ctx, $stack, $terms, $factors, $term, $cont_lifetime, );
             }
             'factor: loop {
                 // Parse next factor OR VBar => end term OR terminal => end expression
-                parse_factor!($tokens, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor } | $term_token => { break 'term });
+                parse_factor!($tokens, $ctx, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor } | $term_token => { break 'term });
             }
-            $terms.push($factors);
-            $factors = Vec::new();
+            $terms.push($factors.into_slice(&$ctx.factors).unwrap(), &$ctx.vec_terms);
+            $factors = mem::uninitialized();
+            $factors.len = 0;
         }
         match $stack.pop() {
             Some((ts, fs, t)) => {
-                $terms.push($factors);
+                $terms.push($factors.into_slice(&$ctx.factors).unwrap(), &$ctx.vec_terms);
                 $factors = fs;
-                $factors.push(UnsafeCell::new($expr_type($arena.alloc($terms)[])));
+                $factors.push(UnsafeCell::new($expr_type($terms.into_slice(&$ctx.terms).unwrap())), &$ctx.vec_factors);
                 $terms = ts;
                 $term = t;
             }, None => { $term_lifetime }
@@ -101,24 +158,28 @@ macro_rules! parse_terms {
 }
 
 macro_rules! parse_expression {
-    ($tokens:expr, $arena:expr, $stack:expr) => {{
+    ($tokens:expr, $ctx:expr, $stack:expr) => {{
         let mut term = ProdEnd;
-        let mut terms: Vec<ParseTerm>;
-        let mut factors: ParseTerm;
+        let mut terms: StackVec<ParseTerm>;
+        let mut factors: StackVec<UnsafeCell<ParseFactor>>;
         'expr: loop {
-            terms = Vec::new();
-            factors = Vec::new();
-            loop {
-                match term {
-                    ProdEnd => parse_terms!($tokens, $arena, $stack, terms, factors, term, (|_| unreachable!()), s::Semi, break 'expr, continue 'expr),
-                    OptEnd => parse_terms!($tokens, $arena, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
-                    RepEnd => parse_terms!($tokens, $arena, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
-                    GroupEnd => parse_terms!($tokens, $arena, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
+            unsafe {
+                terms = mem::uninitialized();
+                factors = mem::uninitialized();
+                terms.len = 0;
+                factors.len = 0;
+                loop {
+                    match term {
+                        ProdEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, (|_| unreachable!()), s::Semi, break 'expr, continue 'expr),
+                        OptEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
+                        RepEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
+                        GroupEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
+                    }
                 }
             }
         }
-        terms.push(factors);
-        $arena.alloc(terms)[]
+        terms.push(factors.into_slice(&$ctx.factors).unwrap()/*[][ .. ])*/, &$ctx.vec_terms);
+        terms.into_slice(&$ctx.terms).unwrap()/*[][ .. ];*/
     }}
 }
 
@@ -135,7 +196,7 @@ impl<'a> Parser<'a> {
     fn lock<'b, 'c>(&'c mut self) -> ParserGuard<'a, 'b, 'c> {
         unsafe {
             ParserGuard {
-                inner_: ::std::mem::transmute(self),
+                inner_: mem::transmute(self),
                 marker_: ::std::kinds::marker::CovariantLifetime,
             }
         }
@@ -145,10 +206,9 @@ impl<'a> Parser<'a> {
     pub fn parse<'b, 'c>(&'c mut self,
                      ctx: &'b ParserContext<'b>,
                      string: &'b [Ascii]) -> Result<::Ebnf<'b>, ::Error> {
-        let ParserContext { ref arena } = *ctx;
-        let mut ctx = self.lock();
-        let ctx = ctx.deref_mut();
-        let Parser { ref mut stack , capacity } = *ctx;
+        let mut guard = self.lock();
+        let guard = guard.deref_mut();
+        let Parser { ref mut stack , capacity } = *guard;
         let mut tokens = Tokens::new(string);
         let (title, next) = match tokens.next() {
             s::Lit(title) => { (Some(title), tokens.next()) },
@@ -163,7 +223,7 @@ impl<'a> Parser<'a> {
                 s::Ident(id) => {
                     if tokens.next() != s::Equals { return Err(::ExpectedEquals) }
                     match productions.entry(id) {
-                        hashmap::Vacant(entry) => { entry.set(parse_expression!(tokens, arena, stack)); }
+                        hashmap::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         hashmap::Occupied(_) => return Err(::DuplicateProduction),
                     }
                 },
