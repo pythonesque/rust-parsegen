@@ -2,13 +2,32 @@ use scanner as s;
 use scanner::Tokens;
 
 use arena::TypedArena;
-use rustc::util::nodemap::{FnvHashMap, FnvHasher};
+use rustc::util::nodemap::{FnvHashMap, FnvHasher, FnvState};
 use std::cell::UnsafeCell;
 use std::cmp;
+use std::default::Default;
+use std::collections::btree;
 use std::collections::hashmap;
-use std::collections::hashmap::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher, Writer};
 use std::mem;
 use std::slice::BoxedSlice;
+use xxhash::{XXHasher, XXState};
+
+pub struct FnvHasherDefault(pub FnvHasher);
+
+impl Default for FnvHasherDefault {
+    #[inline(always)]
+    fn default() -> FnvHasherDefault { FnvHasherDefault(FnvHasher) }
+}
+
+
+impl Hasher<FnvState> for FnvHasherDefault {
+    #[inline(always)]
+    fn hash<T>(&self, t: &T) -> u64 where T: Hash<FnvState> {
+        self.0.hash(t)
+    }
+}
 
 type ParseExpr<'a> = &'a [ParseTerm<'a>];
 
@@ -50,9 +69,13 @@ impl<'a> ParserContext<'a> {
 }
 
 // Parse context, holds information required by the parser (and owns any allocations it makes)
-pub struct Parser<'a> {
+//pub struct Parser<'a, Hasher = XXHasher, State = XXState> {
+pub struct Parser<'a, Hasher = FnvHasherDefault, State = FnvState> {
     capacity: uint, // Guess at how many symbols to parse,
-    stack: Vec<(StackVec<'a, ParseTerm<'a>>, StackVec<'a, UnsafeCell<ParseFactor<'a>>>, ExprType)> // Stored in the parse context so its allocation is reusable.
+    stack: Vec<(StackVec<'a, ParseTerm<'a>>, StackVec<'a, UnsafeCell<ParseFactor<'a>>>, ExprType)>, // Stored in the parse context so its allocation is reusable.
+    /*tx: Sender<Option<(&'static [Ascii], &'static [ParseTerm<'static>])>>,
+    rx: Receiver<Option<Vec<(&'static [Ascii], &'static [ParseTerm<'static>])>>>,*/
+    seed: Hasher,
 }
 
 const STACK_VEC_MAX: uint = 4;
@@ -183,23 +206,81 @@ macro_rules! parse_expression {
     }}
 }
 
-impl<'a> Parser<'a> {
+impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
     // Create a new parse context from a given string
-    pub fn new() -> Parser<'a> {
+    pub fn new() -> Result<Parser<'a, H, T>, ()> {
         Parser::with_capacity(hashmap::INITIAL_CAPACITY)
     }
 
-    pub fn with_capacity(capacity: uint) -> Parser<'a> {
-        Parser { stack: Vec::new(), capacity: capacity }
+    pub fn with_capacity(capacity: uint) -> Result<Parser<'a, H, T>, ()> {
+        /*let (txmain, rxmain) = channel();
+        let (txwork, rxwork) = channel();
+        txmain.send(None);
+        let worker: proc(): 'a = proc() {
+            let (tx, rx) = (txwork, rxmain);
+            let _ = rx.recv(); // Synchronize during parser initialization
+            tx.send(None); // Start up the parser
+            'b: loop {
+                let mut productions = Vec::with_capacity(capacity); // new vector
+                // Wait for parser run synchronization (Some(elem))
+                for m in rx.iter().take_while( |m| m.is_none() ) {
+                    tx.send(None); // Confirmation message was received.
+                }
+                // Begin parser run
+                for m in rx.iter() {
+                    match m {
+                        Some(elem) => {
+                            // Received an element--process it.
+                            productions.push(elem);
+                        }
+                        None => {
+                            // Send off the productions
+                            match tx.send_opt(Some(unsafe { mem::transmute(productions) }))  {
+                                Ok(()) => continue 'b, // Start over
+                                Err(data) => {
+                                    // Could be memory unsafety, leak and die
+                                    unsafe { ::std::mem::forget(data) }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                return; // Exit the thread
+            }
+        };
+        unsafe {
+            let worker: proc(): Send = mem::transmute(worker);
+            spawn(worker);
+        }
+        try!(rxwork.recv_opt());*/
+        Ok(Parser { stack: Vec::new(), capacity: capacity, seed: Default::default() /*tx: txmain, rx: rxwork*/ })
     }
 
     fn lock<'b, 'c>(&'c mut self) -> ParserGuard<'a, 'b, 'c> {
-        unsafe {
+        let mut guard = unsafe {
             ParserGuard {
                 inner_: mem::transmute(self),
                 marker_: ::std::kinds::marker::CovariantLifetime,
             }
-        }
+        };
+        // Synchronize with worker
+        /*guard.tx.send(None);
+        'a: loop {
+            for msg in guard.rx.iter() {
+                match msg {
+                    Some(data) => {
+                        // This shouldn't actually happen, but let's be careful for now and
+                        // leak rather than cause unsafety
+                        unsafe { ::std::mem::forget(data) }
+                    },
+                    None => break 'a
+                }
+            }
+            // Worker thread died, bail out.  ParserGuard will protect us.
+            fail!("Worker thread died!")
+        };*/
+        guard
     }
 
     // Deserialize a Ebnf.
@@ -208,7 +289,7 @@ impl<'a> Parser<'a> {
                      string: &'b [Ascii]) -> Result<::Ebnf<'b>, ::Error> {
         let mut guard = self.lock();
         let guard = guard.deref_mut();
-        let Parser { ref mut stack , capacity } = *guard;
+        let Parser { ref mut stack , capacity, /*ref tx, ref rx, */ seed, } = *guard;
         let mut tokens = Tokens::new(string);
         let (title, next) = match tokens.next() {
             s::Lit(title) => { (Some(title), tokens.next()) },
@@ -216,16 +297,28 @@ impl<'a> Parser<'a> {
             next => (None, next)
         };
         if next != s::LBrace { return Err(::ExpectedLBrace) }
-
-        let mut productions: FnvHashMap<&[Ascii], ParseExpr> = HashMap::with_capacity_and_hasher(capacity, FnvHasher);
+        //let mut productions: FnvHashMap<&[Ascii], ParseExpr> = HashMap::with_capacity_and_hasher(capacity, FnvHasher);
+        //let mut productions: FnvHashMap<&[Ascii], ParseExpr> = HashMap::with_capacity_and_hasher(0, FnvHasher);
+        //let mut productions: HashMap<&[Ascii], ParseExpr>;
+        //let mut productions: HashMap<&[Ascii], ParseExpr, FnvHasherDefault>;
+        //let mut productions: HashMap<&[Ascii], ParseExpr, FnvHasherDefault> = HashMap::with_capacity_and_hasher(capacity, FnvHasherDefault(FnvHasher));
+        //let mut productions: HashMap<&[Ascii], ParseExpr, FnvHasherDefault> = HashMap::with_capacity_and_hasher(capacity, FnvHasherDefault(FnvHasher));
+        let mut productions/*: HashMap<&[Ascii], ParseExpr, H>*/ = HashMap::with_capacity_and_hasher(capacity, /*::new_with_seed(0)*/ seed);
+        //let mut productions = BTreeMap::with_b(23);
+        //let mut productions_ = Vec::with_capacity(capacity);
         loop {
             match tokens.next() {
                 s::Ident(id) => {
                     if tokens.next() != s::Equals { return Err(::ExpectedEquals) }
                     match productions.entry(id) {
+                        //btree::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
+                        //btree::Occupied(_) => return Err(::DuplicateProduction),
                         hashmap::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         hashmap::Occupied(_) => return Err(::DuplicateProduction),
                     }
+                    //productions_.push((id, parse_expression!(tokens, ctx, stack)));
+                    // Should be protected by the ParserGuard so don't worry about failing here.
+                    //tx.send(unsafe { mem::transmute(Some((id, parse_expression!(tokens, ctx, stack)))) })
                 },
                 s::RBrace => break,
                 s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
@@ -240,6 +333,9 @@ impl<'a> Parser<'a> {
         match next {
             s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
             s::EOF => Ok(::Ebnf { title: title, comment: comment, productions: {
+                //tx.send(None); // We're done!
+                //productions_ = rx.recv().unwrap(); // If it's not Some(x) that's a logic bug.
+                //productions = productions_.into_iter().collect();
                 unsafe {
                     {
                         let mut piter = productions.iter().flat_map( |(_, &exp)|
@@ -268,6 +364,8 @@ impl<'a> Parser<'a> {
                     }
                     mem::transmute(productions)
                 }
+                //Vec::new()
+                //unsafe { mem::transmute(productions) }
             }}),
             _ => Err(::ExpectedEOF),
         }
@@ -283,6 +381,8 @@ struct ParserGuard<'a, 'b: 'c, 'c> {
 impl<'a, 'b, 'c> Drop for ParserGuard<'a, 'b, 'c> {
     fn drop(&mut self) {
         self.inner_.stack.clear();
+        /*self.tx.send(None);
+        self.rx.recv(); // If this fails we abort in order to preserve memory safety.*/
     }
 }
 

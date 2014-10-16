@@ -1,13 +1,18 @@
-#![feature(unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules)]
+#![feature(unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing)]
 
 extern crate arena;
 extern crate rustc;
 extern crate test;
+extern crate sync;
+extern crate xxhash;
 
 use rustc::util::nodemap::FnvHashMap;
+use xxhash::XXHasher;
+use std::collections::HashMap;
 use std::fmt;
+use sync::one::{Once, ONCE_INIT};
 
-pub use parser::{Parser, ParserContext};
+pub use parser::{FnvHasherDefault, Parser, ParserContext};
 
 mod scanner;
 mod parser;
@@ -26,6 +31,10 @@ mod parser;
 pub struct Ebnf<'a> {
     title: Option<&'a [Ascii]>,
     productions: FnvHashMap<&'a [Ascii], Expr<'a>>,
+    //productions: HashMap<&'a [Ascii], Expr<'a>, XXHasher>,
+
+    //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
+    //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
     comment: Option<&'a [Ascii]>,
 }
 
@@ -33,6 +42,7 @@ impl<'a> fmt::Show for Ebnf<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "Ebnf {{ title: {}, productions: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
         for (&id, &e) in self.productions.iter() {
+        //for &(id, e) in self.productions.iter() {
             try!(write!(f, "<{}> {}: ", e.as_ptr(), id.as_str_ascii()));
             try!(show_expr(f, "", e, ".\n"));
         }
@@ -160,11 +170,25 @@ fn bench_decode(b: &mut test::Bencher)
                  .to_ascii();
     /*let ref mut parser = Parser::with_capacity(1024);
     let ref ctx = ParserContext::new(8192);*/
-    let ref mut parser = Parser::with_capacity(1024);
+    /*static mut static_parser: *mut Parser<'static> = 0 as *mut _;//unsafe { std::mem::uninitialized(); }
+
+    static START: Once = ONCE_INIT;
+
+    START.doit(|| {
+        unsafe {
+            static_parser = ::std::mem::transmute(box Parser::with_capacity(1024).unwrap());
+        }
+    });
+
+    let parser = unsafe { &mut *static_parser };*/
+
+    let ref mut parser = Parser::with_capacity(1024).unwrap();
     let ref ctx = ParserContext::new(8192);
     b.iter(|| {
-        try_decode(parser, ctx, string).unwrap();
-    })
+        //for _ in range(0, 10i8) {
+            try_decode(parser, ctx, string).unwrap();
+        //}
+    });
 }
 
 #[test]
@@ -174,8 +198,8 @@ fn it_works() {
                 ASN1_EBNF_STRING
                  //ONE_LINE_EBNF_STRING
                  .to_ascii();
-    //let mut parser = Parser::new();
-    let mut parser = Parser::with_capacity(1024);
+    //let mut parser = Parser::new().unwrap();
+    let mut parser = Parser::with_capacity(1024).unwrap();
     for _ in range(0, 1000u) {
         //let ctx = ParserContext::new(8); // or here...
         let ctx = ParserContext::new(8192);

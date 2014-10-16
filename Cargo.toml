@@ -1,5 +1,5 @@
 [package]
 
-name = "rust-parsegen"
+name = "parsegen"
 version = "0.0.1"
 authors = ["Joshua Yanovski <pythonesque@gmail.com>"]
