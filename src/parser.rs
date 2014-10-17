@@ -2,17 +2,15 @@ use scanner as s;
 use scanner::Tokens;
 
 use arena::TypedArena;
-use rustc::util::nodemap::{FnvHashMap, FnvHasher, FnvState};
+use rustc::util::nodemap::{FnvHasher, FnvState};
 use std::cell::UnsafeCell;
 use std::cmp;
 use std::default::Default;
-use std::collections::btree;
 use std::collections::hashmap;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap};
 use std::hash::{Hash, Hasher, Writer};
 use std::mem;
 use std::slice::BoxedSlice;
-use xxhash::{XXHasher, XXState};
 
 pub struct FnvHasherDefault(pub FnvHasher);
 
@@ -258,7 +256,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
     }
 
     fn lock<'b, 'c>(&'c mut self) -> ParserGuard<'a, 'b, 'c> {
-        let mut guard = unsafe {
+        let guard = unsafe {
             ParserGuard {
                 inner_: mem::transmute(self),
                 marker_: ::std::kinds::marker::CovariantLifetime,

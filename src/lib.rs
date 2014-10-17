@@ -4,13 +4,10 @@ extern crate arena;
 extern crate rustc;
 extern crate test;
 extern crate sync;
-extern crate xxhash;
 
 use rustc::util::nodemap::FnvHashMap;
-use xxhash::XXHasher;
-use std::collections::HashMap;
 use std::fmt;
-use sync::one::{Once, ONCE_INIT};
+//use sync::one::{Once, ONCE_INIT};
 
 pub use parser::{FnvHasherDefault, Parser, ParserContext};
 
@@ -164,7 +161,7 @@ const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
 fn bench_decode(b: &mut test::Bencher)
 {
     //let string = EBNF_EBNF_STRING.to_ascii();
-    let string = //ASN1_EBNF_STRING
+    let string = //EBNF_EBNF_STRING
                  ASN1_EBNF_STRING
                  //ONE_LINE_EBNF_STRING
                  .to_ascii();
