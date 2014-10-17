@@ -2,14 +2,13 @@
 
 extern crate arena;
 extern crate rustc;
-extern crate test;
 extern crate sync;
+extern crate test;
 
 use rustc::util::nodemap::FnvHashMap;
 use std::fmt;
-//use sync::one::{Once, ONCE_INIT};
 
-pub use parser::{FnvHasherDefault, Parser, ParserContext};
+pub use parser::{Parser, ParserContext};
 
 mod scanner;
 mod parser;
@@ -111,107 +110,79 @@ pub enum Error {
     ExpectedFactorOrEnd, // Expected a factor or end delimiter of some sort, found something else
 }
 
-/*fn parse(string: &[Ascii]) -> Result<(), Error> {
-    let mut tokens = Tokens::new(string);
-    loop {
-        let tok = tokens.next();
-        match try!(tok) {
-            EOF => return Ok(()),
-            Ident(s) => println!("Ident({})", s.as_str_ascii()),
-            Literal(s) => println!("Literal({})", s.as_str_ascii()),
-            t => println!("{}", t),
-        }
-    }
-}*/
-
 #[cfg(test)]
-fn try_decode<'a, 'b, 'c>(parser: &'c mut Parser<'b>,
-                          ctx: &'a ParserContext<'a>,
-                          string: &'a [Ascii]) -> Result<Ebnf<'a>, Error> {
-    parser.parse(ctx, string)
-}
+mod tests {
+    use test::Bencher;
+    use parser::{Parser, ParserContext};
 
-const EBNF_EBNF_STRING: &'static [u8] =
-br#""EBNF defined in itself" {
-syntax     = [ title ] "{" { production } "}" [ comment ].
-production = identifier "=" expression ( "." | ";" ) .
-expression = term { "|" term } .
-term       = factor { factor } .
-factor     = identifier
-           | literal
-           | "[" expression "]"
-           | "(" expression ")"
-           | "{" expression "}" .
-identifier = character { character } .
-title      = literal .
-comment    = literal .
-literal    = "'" character { character } "'"
-           | '"' character { character } '"' .
-character  = "a" .
-}"#;
+    fn try_decode<'a, 'b, 'c>(parser: &'c mut Parser<'b>,
+                              ctx: &'a ParserContext<'a>,
+                              string: &'a [Ascii]) -> Result<::Ebnf<'a>, ::Error> {
+        parser.parse(ctx, string)
+    }
 
-const ONE_LINE_EBNF_STRING: &'static [u8] =
-br#""a" {
-    a = "a1" ( "a2" | "a3" ) { "a4" } [ "a5" ] "a6" ;
-    } "z""#;
+    const EBNF_EBNF_STRING: &'static [u8] = include_bin!("resources/ebnf.ebnf");
 
-const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
+    const ONE_LINE_EBNF_STRING: &'static [u8] = include_bin!("resources/one_line.ebnf");
 
-#[bench]
-fn bench_decode(b: &mut test::Bencher)
-{
-    //let string = EBNF_EBNF_STRING.to_ascii();
-    let string = //EBNF_EBNF_STRING
-                 ASN1_EBNF_STRING
-                 //ONE_LINE_EBNF_STRING
-                 .to_ascii();
-    /*let ref mut parser = Parser::with_capacity(1024);
-    let ref ctx = ParserContext::new(8192);*/
-    /*static mut static_parser: *mut Parser<'static> = 0 as *mut _;//unsafe { std::mem::uninitialized(); }
+    const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
 
-    static START: Once = ONCE_INIT;
+    #[bench]
+    fn bench_decode(b: &mut Bencher)
+    {
+        //let string = EBNF_EBNF_STRING.to_ascii();
+        let string = //EBNF_EBNF_STRING
+                     ASN1_EBNF_STRING
+                     //ONE_LINE_EBNF_STRING
+                     .to_ascii();
+        /*let ref mut parser = Parser::with_capacity(1024);
+        let ref ctx = ParserContext::new(8192);*/
+        /*static mut static_parser: *mut Parser<'static> = 0 as *mut _;//unsafe { std::mem::uninitialized(); }
 
-    START.doit(|| {
-        unsafe {
-            static_parser = ::std::mem::transmute(box Parser::with_capacity(1024).unwrap());
+        static START: Once = ONCE_INIT;
+
+        START.doit(|| {
+            unsafe {
+                static_parser = ::std::mem::transmute(box Parser::with_capacity(1024).unwrap());
+            }
+        });
+
+        let parser = unsafe { &mut *static_parser };*/
+
+        let ref mut parser = Parser::with_capacity(1024).unwrap();
+        let ref ctx = ParserContext::new(8192);
+        b.iter(|| {
+            //for _ in range(0, 10i8) {
+                try_decode(parser, ctx, string).unwrap();
+            //}
+        });
+    }
+
+    #[test]
+    fn it_works() {
+        //let mut ctx = ParserContext::new(); // Can put this either here...
+        let string = //EBNF_EBNF_STRING
+                    ASN1_EBNF_STRING
+                     //ONE_LINE_EBNF_STRING
+                     .to_ascii();
+        //let mut parser = Parser::new().unwrap();
+        let mut parser = Parser::with_capacity(1024).unwrap();
+        for _ in range(0, 1000u) {
+            //let ctx = ParserContext::new(8); // or here...
+            let ctx = ParserContext::new(8192);
+            let foo = match try_decode(&mut parser, &ctx, string) {
+                Ok(c) => {println!("{}", c); c }
+                Err(e) => //{println!("{}", e); break },
+                        fail!("{}", e),
+            };
+            /*for _ in range(0u16, 1000) {
+                let ctx = ParserContext::new(); // or here...
+                let _ = try_decode(&mut parser, &ctx, string);
+            }*/
+            break;
+            //arena = ParserContext::new(); // or here...
+            //println!("{}", foo);
+            //break;
         }
-    });
-
-    let parser = unsafe { &mut *static_parser };*/
-
-    let ref mut parser = Parser::with_capacity(1024).unwrap();
-    let ref ctx = ParserContext::new(8192);
-    b.iter(|| {
-        //for _ in range(0, 10i8) {
-            try_decode(parser, ctx, string).unwrap();
-        //}
-    });
-}
-
-#[test]
-fn it_works() {
-    //let mut ctx = ParserContext::new(); // Can put this either here...
-    let string = //EBNF_EBNF_STRING
-                ASN1_EBNF_STRING
-                 //ONE_LINE_EBNF_STRING
-                 .to_ascii();
-    //let mut parser = Parser::new().unwrap();
-    let mut parser = Parser::with_capacity(1024).unwrap();
-    for _ in range(0, 1000u) {
-        //let ctx = ParserContext::new(8); // or here...
-        let ctx = ParserContext::new(8192);
-        let foo = match try_decode(&mut parser, &ctx, string) {
-            Ok(c) => {println!("{}", c); c }
-            Err(e) => //{println!("{}", e); break },
-                    fail!("{}", e),
-        };
-        /*for _ in range(0u16, 1000) {
-            let ctx = ParserContext::new(); // or here...
-            let _ = try_decode(&mut parser, &ctx, string);
-        }*/
-        break;
-        //arena = ParserContext::new(); // or here...
-        //println!("{}", foo);
-        //break;
     }
 }
