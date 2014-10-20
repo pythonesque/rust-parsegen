@@ -25,6 +25,21 @@ pub struct Tokens<'a> {
     marker: marker::ContravariantLifetime<'a>,
 }
 
+macro_rules! consume_token {
+    ($this:expr, $val:pat) => {{
+        while $this.ptr != $this.end {
+            let old = $this.ptr;
+            $this.ptr = unsafe { $this.ptr.offset(1) };
+            match unsafe { (*old).to_byte() } {
+                $val => return true,
+                b' ' | b'\x09' ... b'\x0d' => continue,
+                _ => return false,
+            }
+        }
+        false
+    }}
+}
+
 impl<'a> Tokens<'a> {
     pub fn new(string: &'a [Ascii]) -> Tokens {
         unsafe {
@@ -37,6 +52,10 @@ impl<'a> Tokens<'a> {
             }
         }
     }
+
+    #[inline(always)]
+    //pub fn consume_equals(&mut self) -> bool { consume_token!(self, b'=') }
+
 
     // This is where the lexing happens.  Note that it does not handle string escaping.
     #[inline(always)]

@@ -316,6 +316,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     let id = tokens.tok;*/
                 s::Ident(id) => {
                     if tokens.next() != s::Equals { return Err(::ExpectedEquals) }
+                    //if !tokens.consume_equals() { return Err(::ExpectedEquals) }
                     /*match productions.entry(id) {
                         //btree::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         //btree::Occupied(_) => return Err(::DuplicateProduction),
@@ -364,7 +365,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                                             slice::Found(id) => {
                                                 ::Ref(mem::transmute(productions[id].1))
                                             }
-                                            slice::NotFound(_) => return Err(::MissingProduction),
+                                            _ => return Err(::MissingProduction),
                                         },
                                         Lit(l) => ::Lit(l),
                                         Opt(e) => ::Opt(mem::transmute(e)),
