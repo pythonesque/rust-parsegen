@@ -339,10 +339,6 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 productions.sort_by( |a, b| a.0.cmp(&b.0));
                 unsafe {
                     {
-                        /*let mut piter = productions.iter().flat_map( |(_, &exp)|
-                            exp.iter().flat_map( |t| t.iter() ) );*/
-                        let mut piter = productions.iter().flat_map( |&(_, exp)|
-                            exp.iter().flat_map( |t| t.iter() ) );
                         // Invariants: must read pfactors in order (never repeat a read), and must read
                         // them before they are written to (otherwise, we could accidentally ready a
                         // factor masquerading as a pfactor).  The reason this hack is necessary is
@@ -351,22 +347,25 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         // reason we don't want to tag it (or just keep an extra variant around) is for
                         // type safety: once the parsing phase is over we should only have Refs, never
                         // Idents.
-                        for pfactor in piter {
-                            let factor = match *pfactor.get() {
-                                /*Ident(i) => match productions.find(&i) {
-                                    Some(&e) => ::Ref(mem::transmute(e)),
-                                    None => return Err(::MissingProduction),
-                                },*/
-                                Ident(i) => match productions[].binary_search(|&(id, _)| /*if id < i { Less } else if id == i { Equal } else { Greater }*/id.cmp(&i)) {
-                                    slice::Found(/*&(i, e)*/id) => ::Ref(mem::transmute(productions[id].1)),
-                                    slice::NotFound(_) => return Err(::MissingProduction),
-                                },
-                                Lit(l) => ::Lit(l),
-                                Opt(e) => ::Opt(mem::transmute(e)),
-                                Rep(e) => ::Rep(mem::transmute(e)),
-                                Group(e) => ::Group(mem::transmute(e)),
-                            };
-                            *pfactor.get() = mem::transmute(factor)
+                        for &(_, exp) in productions.iter() {
+                            for t in exp.iter() {
+                                for pfactor in t.iter() {
+                                    let factor = match *pfactor.get() {
+                                        Ident(i) => match productions[].binary_search(|&(id, _)| {
+                                                id.cmp(&i)}) {
+                                            slice::Found(id) => {
+                                                ::Ref(mem::transmute(productions[id].1))
+                                            }
+                                            slice::NotFound(_) => return Err(::MissingProduction),
+                                        },
+                                        Lit(l) => ::Lit(l),
+                                        Opt(e) => ::Opt(mem::transmute(e)),
+                                        Rep(e) => ::Rep(mem::transmute(e)),
+                                        Group(e) => ::Group(mem::transmute(e)),
+                                    };
+                                    *pfactor.get() = mem::transmute(factor)
+                                }
+                            }
                         }
                     }
                     mem::transmute(productions)
