@@ -7,9 +7,10 @@ use std::cell::UnsafeCell;
 use std::cmp;
 use std::default::Default;
 use std::collections::hashmap;
-use std::collections::{HashMap};
+//use std::collections::{HashMap};
 use std::hash::{Hash, Hasher, Writer};
 use std::mem;
+use std::slice;
 use std::slice::BoxedSlice;
 
 pub struct FnvHasherDefault(pub FnvHasher);
@@ -73,7 +74,7 @@ pub struct Parser<'a, Hasher = FnvHasherDefault, State = FnvState> {
     stack: Vec<(StackVec<'a, ParseTerm<'a>>, StackVec<'a, UnsafeCell<ParseFactor<'a>>>, ExprType)>, // Stored in the parse context so its allocation is reusable.
     /*tx: Sender<Option<(&'static [Ascii], &'static [ParseTerm<'static>])>>,
     rx: Receiver<Option<Vec<(&'static [Ascii], &'static [ParseTerm<'static>])>>>,*/
-    seed: Hasher,
+    //seed: Hasher,
 }
 
 const STACK_VEC_MAX: uint = 4;
@@ -252,7 +253,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
             spawn(worker);
         }
         try!(rxwork.recv_opt());*/
-        Ok(Parser { stack: Vec::new(), capacity: capacity, seed: Default::default() /*tx: txmain, rx: rxwork*/ })
+        Ok(Parser { stack: Vec::new(), capacity: capacity, /*seed: Default::default() /*tx: txmain, rx: rxwork*/*/ })
     }
 
     fn lock<'b, 'c>(&'c mut self) -> ParserGuard<'a, 'b, 'c> {
@@ -287,7 +288,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                      string: &'b [Ascii]) -> Result<::Ebnf<'b>, ::Error> {
         let mut guard = self.lock();
         let guard = guard.deref_mut();
-        let Parser { ref mut stack , capacity, /*ref tx, ref rx, */ seed, } = *guard;
+        let Parser { ref mut stack , capacity, /*ref tx, ref rx, */ /*seed,*/ } = *guard;
         let mut tokens = Tokens::new(string);
         let (title, next) = match tokens.next() {
             s::Lit(title) => { (Some(title), tokens.next()) },
@@ -301,20 +302,20 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         //let mut productions: HashMap<&[Ascii], ParseExpr, FnvHasherDefault>;
         //let mut productions: HashMap<&[Ascii], ParseExpr, FnvHasherDefault> = HashMap::with_capacity_and_hasher(capacity, FnvHasherDefault(FnvHasher));
         //let mut productions: HashMap<&[Ascii], ParseExpr, FnvHasherDefault> = HashMap::with_capacity_and_hasher(capacity, FnvHasherDefault(FnvHasher));
-        let mut productions/*: HashMap<&[Ascii], ParseExpr, H>*/ = HashMap::with_capacity_and_hasher(capacity, /*::new_with_seed(0)*/ seed);
+        //let mut productions/*: HashMap<&[Ascii], ParseExpr, H>*/ = HashMap::with_capacity_and_hasher(capacity, /*::new_with_seed(0)*/ seed);
         //let mut productions = BTreeMap::with_b(23);
-        //let mut productions_ = Vec::with_capacity(capacity);
+        let mut productions_ = Vec::with_capacity(capacity);
         loop {
             match tokens.next() {
                 s::Ident(id) => {
                     if tokens.next() != s::Equals { return Err(::ExpectedEquals) }
-                    match productions.entry(id) {
+                    /*match productions.entry(id) {
                         //btree::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         //btree::Occupied(_) => return Err(::DuplicateProduction),
                         hashmap::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         hashmap::Occupied(_) => return Err(::DuplicateProduction),
-                    }
-                    //productions_.push((id, parse_expression!(tokens, ctx, stack)));
+                    }*/
+                    productions_.push((id, parse_expression!(tokens, ctx, stack)));
                     // Should be protected by the ParserGuard so don't worry about failing here.
                     //tx.send(unsafe { mem::transmute(Some((id, parse_expression!(tokens, ctx, stack)))) })
                 },
@@ -334,9 +335,13 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 //tx.send(None); // We're done!
                 //productions_ = rx.recv().unwrap(); // If it's not Some(x) that's a logic bug.
                 //productions = productions_.into_iter().collect();
+                let mut productions = productions_;
+                productions.sort_by( |a, b| a.0.cmp(&b.0));
                 unsafe {
                     {
-                        let mut piter = productions.iter().flat_map( |(_, &exp)|
+                        /*let mut piter = productions.iter().flat_map( |(_, &exp)|
+                            exp.iter().flat_map( |t| t.iter() ) );*/
+                        let mut piter = productions.iter().flat_map( |&(_, exp)|
                             exp.iter().flat_map( |t| t.iter() ) );
                         // Invariants: must read pfactors in order (never repeat a read), and must read
                         // them before they are written to (otherwise, we could accidentally ready a
@@ -348,9 +353,13 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         // Idents.
                         for pfactor in piter {
                             let factor = match *pfactor.get() {
-                                Ident(i) => match productions.find(&i) {
+                                /*Ident(i) => match productions.find(&i) {
                                     Some(&e) => ::Ref(mem::transmute(e)),
                                     None => return Err(::MissingProduction),
+                                },*/
+                                Ident(i) => match productions[].binary_search(|&(id, _)| /*if id < i { Less } else if id == i { Equal } else { Greater }*/id.cmp(&i)) {
+                                    slice::Found(/*&(i, e)*/id) => ::Ref(mem::transmute(productions[id].1)),
+                                    slice::NotFound(_) => return Err(::MissingProduction),
                                 },
                                 Lit(l) => ::Lit(l),
                                 Opt(e) => ::Opt(mem::transmute(e)),
@@ -363,7 +372,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     mem::transmute(productions)
                 }
                 //Vec::new()
-                //unsafe { mem::transmute(productions) }
+                //unsafe { mem::transmute(productions_) }
             }}),
             _ => Err(::ExpectedEOF),
         }

@@ -5,7 +5,7 @@ extern crate rustc;
 extern crate sync;
 extern crate test;
 
-use rustc::util::nodemap::FnvHashMap;
+//use rustc::util::nodemap::FnvHashMap;
 use std::fmt;
 
 pub use parser::{Parser, ParserContext};
@@ -26,19 +26,19 @@ mod parser;
 }*/
 pub struct Ebnf<'a> {
     title: Option<&'a [Ascii]>,
-    productions: FnvHashMap<&'a [Ascii], Expr<'a>>,
+    //productions: FnvHashMap<&'a [Ascii], Expr<'a>>,
     //productions: HashMap<&'a [Ascii], Expr<'a>, XXHasher>,
 
     //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
-    //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
+    productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
     comment: Option<&'a [Ascii]>,
 }
 
 impl<'a> fmt::Show for Ebnf<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "Ebnf {{ title: {}, productions: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
-        for (&id, &e) in self.productions.iter() {
-        //for &(id, e) in self.productions.iter() {
+        //for (&id, &e) in self.productions.iter() {
+        for &(id, e) in self.productions.iter() {
             try!(write!(f, "<{}> {}: ", e.as_ptr(), id.as_str_ascii()));
             try!(show_expr(f, "", e, ".\n"));
         }
@@ -150,8 +150,13 @@ mod tests {
         let parser = unsafe { &mut *static_parser };*/
 
         let ref mut parser = Parser::with_capacity(1024).unwrap();
-        let ref ctx = ParserContext::new(8192);
+        //let ref mut parser = Parser::new().unwrap();
+        //let ref ctx = ParserContext::new(0x1000);
         b.iter(|| {
+            let ref ctx = ParserContext::new(0x100);
+            //let ref ctx = ParserContext::new(80);
+            //let ref ctx = ParserContext::new(8);
+            //let ref ctx = ParserContext::new(32);
             //for _ in range(0, 10i8) {
                 try_decode(parser, ctx, string).unwrap();
             //}
@@ -170,7 +175,7 @@ mod tests {
         for _ in range(0, 1000u) {
             //let ctx = ParserContext::new(8); // or here...
             let ctx = ParserContext::new(8192);
-            let foo = match try_decode(&mut parser, &ctx, string) {
+            let /*foo*/_ = match try_decode(&mut parser, &ctx, string) {
                 Ok(c) => {println!("{}", c); c }
                 Err(e) => //{println!("{}", e); break },
                         fail!("{}", e),
