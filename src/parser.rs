@@ -2,18 +2,19 @@ use scanner as s;
 use scanner::Tokens;
 
 use arena::TypedArena;
-use rustc::util::nodemap::{FnvHasher, FnvState};
+//use rustc::util::nodemap::{FnvHasher, FnvState};
 use std::cell::UnsafeCell;
 use std::cmp;
 use std::default::Default;
 use std::collections::hashmap;
 //use std::collections::{HashMap};
-use std::hash::{Hash, Hasher, Writer};
+use std::hash::{Hasher, Writer};
+use std::hash::sip::{SipHasher, SipState};
 use std::mem;
 use std::slice;
 use std::slice::BoxedSlice;
 
-pub struct FnvHasherDefault(pub FnvHasher);
+/*pub struct FnvHasherDefault(pub FnvHasher);
 
 impl Default for FnvHasherDefault {
     #[inline(always)]
@@ -26,7 +27,7 @@ impl Hasher<FnvState> for FnvHasherDefault {
     fn hash<T>(&self, t: &T) -> u64 where T: Hash<FnvState> {
         self.0.hash(t)
     }
-}
+}*/
 
 type ParseExpr<'a> = &'a [ParseTerm<'a>];
 
@@ -69,7 +70,8 @@ impl<'a> ParserContext<'a> {
 
 // Parse context, holds information required by the parser (and owns any allocations it makes)
 //pub struct Parser<'a, Hasher = XXHasher, State = XXState> {
-pub struct Parser<'a, Hasher = FnvHasherDefault, State = FnvState> {
+//pub struct Parser<'a, Hasher = FnvHasherDefault, State = FnvState> {
+pub struct Parser<'a, Hasher = SipHasher, State = SipState> {
     capacity: uint, // Guess at how many symbols to parse,
     stack: Vec<(StackVec<'a, ParseTerm<'a>>, StackVec<'a, UnsafeCell<ParseFactor<'a>>>, ExprType)>, // Stored in the parse context so its allocation is reusable.
     /*tx: Sender<Option<(&'static [Ascii], &'static [ParseTerm<'static>])>>,

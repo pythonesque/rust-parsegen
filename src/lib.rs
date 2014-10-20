@@ -1,7 +1,8 @@
 #![feature(unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing)]
 
 extern crate arena;
-extern crate rustc;
+extern crate libc;
+//extern crate rustc;
 extern crate sync;
 extern crate test;
 
