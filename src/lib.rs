@@ -3,7 +3,7 @@
 extern crate arena;
 extern crate libc;
 //extern crate rustc;
-extern crate sync;
+//extern crate sync;
 extern crate test;
 
 //use rustc::util::nodemap::FnvHashMap;

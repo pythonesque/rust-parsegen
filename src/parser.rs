@@ -129,7 +129,9 @@ macro_rules! parse_factor {
     ($tokens:expr, $ctx:expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt)|*) => {{
         match $tokens.next() {
             s::Ident(i) =>$factors.push(UnsafeCell::new(Ident(i)), &$ctx.vec_factors),
+            //s::Ident =>$factors.push(UnsafeCell::new(Ident($tokens.tok)), &$ctx.vec_factors),
             s::Lit(l) => $factors.push(UnsafeCell::new(Lit(l)), &$ctx.vec_factors),
+            //s::Lit => $factors.push(UnsafeCell::new(Lit($tokens.tok)), &$ctx.vec_factors),
             s::LBracket => {
                 $stack.push(($terms, $factors, $term));
                 $term = OptEnd;
@@ -293,6 +295,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         let Parser { ref mut stack , capacity, /*ref tx, ref rx, */ /*seed,*/ } = *guard;
         let mut tokens = Tokens::new(string);
         let (title, next) = match tokens.next() {
+            //s::Lit => { (Some(tokens.tok), tokens.next()) },
             s::Lit(title) => { (Some(title), tokens.next()) },
             s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
             next => (None, next)
@@ -309,6 +312,8 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         let mut productions_ = Vec::with_capacity(capacity);
         loop {
             match tokens.next() {
+                /*s::Ident => {
+                    let id = tokens.tok;*/
                 s::Ident(id) => {
                     if tokens.next() != s::Equals { return Err(::ExpectedEquals) }
                     /*match productions.entry(id) {
@@ -327,6 +332,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
             }
         }
         let (comment, next) = match tokens.next() {
+            //s::Lit => (Some(tokens.tok), tokens.next()),
             s::Lit(comment) => (Some(comment), tokens.next()),
             s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
             next => (None, next),

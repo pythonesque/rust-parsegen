@@ -4,7 +4,9 @@ use std::raw::Slice;
 
 #[deriving(PartialEq, Show)]
 pub enum Token<'a> {
+    //Ident/*(&'a [Ascii])*/,
     Ident(&'a [Ascii]),
+    //Lit/*(&'a [Ascii])*/,
     Lit(&'a [Ascii]),
     Equals,
     VBar,
@@ -19,6 +21,7 @@ pub enum Token<'a> {
 pub struct Tokens<'a> {
     ptr: *const Ascii,
     end: *const Ascii,
+    //pub tok: &'a [Ascii],
     marker: marker::ContravariantLifetime<'a>,
 }
 
@@ -27,6 +30,7 @@ impl<'a> Tokens<'a> {
         unsafe {
             let p = string.as_ptr();
             Tokens {
+                //tok: string,
                 ptr: p,
                 end: p.offset(string.len() as int),
                 marker: marker::ContravariantLifetime::<'a>,
@@ -66,6 +70,8 @@ impl<'a> Tokens<'a> {
                             }
                             let len = old.to_uint() - start.to_uint();
                             Lit(mem::transmute(Slice { data: start, len: len  }))
+                            //self.tok = mem::transmute(Slice { data: start, len: len  });
+                            //Lit
                         },
                         // Single quoted literal start
                         b'\'' => {
@@ -79,6 +85,8 @@ impl<'a> Tokens<'a> {
                             }
                             let len = old.to_uint() - start.to_uint();
                             Lit(mem::transmute(Slice { data: start, len: len }))
+                            //self.tok = mem::transmute(Slice { data: start, len: len });
+                            //Lit
                         },
                         // Skip whitespace.  This could probably be made more efficient.
                         b' ' | b'\x09' ... b'\x0d' => {
@@ -110,11 +118,29 @@ impl<'a> Tokens<'a> {
                             }
                             let len = self.ptr.to_uint() - old.to_uint();
                             Ident(mem::transmute(Slice { data: old, len: len }))
+                            //self.tok = mem::transmute(Slice { data: old, len: len });
+                            //Ident
                         },
                     };
-                    return mem::transmute(new)
+                    return new
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use test::Bencher;
+    use super::Tokens;
+
+    #[bench]
+    fn bench_next(b: &mut Bencher) {
+        static STRING: &'static [u8] = br#"(a b c d = f "ghi" j 'klm')"#;
+        let string = STRING.to_ascii();
+        b.iter(|| {
+            let mut tokens = Tokens::new(string);
+            while tokens.next() != super::EOF {}
+        })
     }
 }
