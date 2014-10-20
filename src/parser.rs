@@ -350,7 +350,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                             let factor = match *pfactor.get() {
                                 Ident(i) => match productions.find(&i) {
                                     Some(&e) => ::Ref(mem::transmute(e)),
-                                    None => {println!("{}", i); return Err(::MissingProduction) }
+                                    None => return Err(::MissingProduction),
                                 },
                                 Lit(l) => ::Lit(l),
                                 Opt(e) => ::Opt(mem::transmute(e)),
