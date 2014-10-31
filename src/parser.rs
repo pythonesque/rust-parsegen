@@ -13,6 +13,7 @@ use std::hash::sip::{SipHasher, SipState};
 use std::mem;
 use std::slice;
 use std::slice::BoxedSlice;
+//use std::collections::PriorityQueue;
 
 /*pub struct FnvHasherDefault(pub FnvHasher);
 
@@ -26,6 +27,28 @@ impl Hasher<FnvState> for FnvHasherDefault {
     #[inline(always)]
     fn hash<T>(&self, t: &T) -> u64 where T: Hash<FnvState> {
         self.0.hash(t)
+    }
+}*/
+
+/*struct ParseProduction<'a>(&'a [Ascii], ParseExpr<'a>);
+
+impl<'a> PartialEq for ParseProduction<'a> {
+    fn eq(&self, other: &ParseProduction<'a>) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl<'a> PartialOrd for ParseProduction<'a> {
+    fn partial_cmp(&self, other: &ParseProduction<'a>) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<'a> Eq for ParseProduction<'a> {}
+
+impl<'a> Ord for ParseProduction<'a> {
+    fn cmp(&self, other: &ParseProduction<'a>) -> Ordering {
+        self.0.cmp(&other.0)
     }
 }*/
 
@@ -79,7 +102,7 @@ pub struct Parser<'a, Hasher = SipHasher, State = SipState> {
     //seed: Hasher,
 }
 
-const STACK_VEC_MAX: uint = 4;
+const STACK_VEC_MAX: uint = 4; // Arrived at by highly scientific guess and check algorithm
 
 struct StackVec<'a, T> where T: 'a {
     vec: &'a mut Vec<T>,
@@ -310,6 +333,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         //let mut productions/*: HashMap<&[Ascii], ParseExpr, H>*/ = HashMap::with_capacity_and_hasher(capacity, /*::new_with_seed(0)*/ seed);
         //let mut productions = BTreeMap::with_b(23);
         let mut productions_ = Vec::with_capacity(capacity);
+        //let mut productions_ = PriorityQueue::with_capacity(capacity);
         loop {
             match tokens.next() {
                 /*s::Ident => {
@@ -323,7 +347,8 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         hashmap::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         hashmap::Occupied(_) => return Err(::DuplicateProduction),
                     }*/
-                    productions_.push((id, parse_expression!(tokens, ctx, stack)));
+                    //productions_.push((id, parse_expression!(tokens, ctx, stack)));
+                    productions_.push(/*ParseProduction*/(id, parse_expression!(tokens, ctx, stack)));
                     // Should be protected by the ParserGuard so don't worry about failing here.
                     //tx.send(unsafe { mem::transmute(Some((id, parse_expression!(tokens, ctx, stack)))) })
                 },
@@ -344,8 +369,10 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 //tx.send(None); // We're done!
                 //productions_ = rx.recv().unwrap(); // If it's not Some(x) that's a logic bug.
                 //productions = productions_.into_iter().collect();
+                //let mut productions = productions_.into_sorted_vec();
                 let mut productions = productions_;
                 productions.sort_by( |a, b| a.0.cmp(&b.0));
+                //productions.sort();
                 unsafe {
                     {
                         // Invariants: must read pfactors in order (never repeat a read), and must read
@@ -356,11 +383,12 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         // reason we don't want to tag it (or just keep an extra variant around) is for
                         // type safety: once the parsing phase is over we should only have Refs, never
                         // Idents.
-                        for &(_, exp) in productions.iter() {
+                        for &/*ParseProduction*/(_, exp) in productions.iter() {
                             for t in exp.iter() {
                                 for pfactor in t.iter() {
                                     let factor = match *pfactor.get() {
-                                        Ident(i) => match productions[].binary_search(|&(id, _)| {
+                                        Ident(i) => match
+                                            productions[].binary_search(|&/*ParseProduction*/(id, _)| {
                                                 id.cmp(&i)}) {
                                             slice::Found(id) => {
                                                 ::Ref(mem::transmute(productions[id].1))

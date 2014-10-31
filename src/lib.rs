@@ -179,7 +179,7 @@ mod tests {
             let /*foo*/_ = match try_decode(&mut parser, &ctx, string) {
                 Ok(c) => {println!("{}", c); c }
                 Err(e) => //{println!("{}", e); break },
-                        fail!("{}", e),
+                        panic!("{}", e),
             };
             /*for _ in range(0u16, 1000) {
                 let ctx = ParserContext::new(); // or here...

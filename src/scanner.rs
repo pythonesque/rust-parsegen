@@ -2,7 +2,7 @@ use std::kinds::marker;
 use std::mem;
 use std::raw::Slice;
 
-#[deriving(PartialEq, Show)]
+#[deriving(PartialEq)]
 pub enum Token<'a> {
     //Ident/*(&'a [Ascii])*/,
     Ident(&'a [Ascii]),
