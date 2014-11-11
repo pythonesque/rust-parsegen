@@ -6,13 +6,13 @@ use arena::TypedArena;
 use std::cell::UnsafeCell;
 use std::cmp;
 use std::default::Default;
-use std::collections::hashmap;
+use std::collections::hash_map;
 //use std::collections::{HashMap};
 use std::hash::{Hasher, Writer};
 use std::hash::sip::{SipHasher, SipState};
 use std::mem;
 use std::slice;
-use std::slice::BoxedSlice;
+use std::slice::BoxedSlicePrelude;
 //use std::collections::PriorityQueue;
 
 /*pub struct FnvHasherDefault(pub FnvHasher);
@@ -235,7 +235,7 @@ macro_rules! parse_expression {
 impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
     // Create a new parse context from a given string
     pub fn new() -> Result<Parser<'a, H, T>, ()> {
-        Parser::with_capacity(hashmap::INITIAL_CAPACITY)
+        Parser::with_capacity(hash_map::INITIAL_CAPACITY)
     }
 
     pub fn with_capacity(capacity: uint) -> Result<Parser<'a, H, T>, ()> {
@@ -344,8 +344,8 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     /*match productions.entry(id) {
                         //btree::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
                         //btree::Occupied(_) => return Err(::DuplicateProduction),
-                        hashmap::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
-                        hashmap::Occupied(_) => return Err(::DuplicateProduction),
+                        hash_map::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
+                        hash_map::Occupied(_) => return Err(::DuplicateProduction),
                     }*/
                     //productions_.push((id, parse_expression!(tokens, ctx, stack)));
                     productions_.push(/*ParseProduction*/(id, parse_expression!(tokens, ctx, stack)));
@@ -371,7 +371,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 //productions = productions_.into_iter().collect();
                 //let mut productions = productions_.into_sorted_vec();
                 let mut productions = productions_;
-                productions.sort_by( |a, b| a.0.cmp(&b.0));
+                productions.sort_by( |a, b| a.0.cmp(b.0));
                 //productions.sort();
                 unsafe {
                     {
@@ -389,7 +389,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                                     let factor = match *pfactor.get() {
                                         Ident(i) => match
                                             productions[].binary_search(|&/*ParseProduction*/(id, _)| {
-                                                id.cmp(&i)}) {
+                                                id.cmp(i)}) {
                                             slice::Found(id) => {
                                                 ::Ref(mem::transmute(productions[id].1))
                                             }
