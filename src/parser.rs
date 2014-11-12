@@ -373,17 +373,18 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 //let mut productions = productions_.into_sorted_vec();
                 let mut productions = productions_;
                 productions.sort_by( |a, b| a.0.cmp(b.0));
-                let mut productions_ = UnsafeCell::new(productions);
+                let productions_ = productions;
+                let productions = productions_[].repr();
                 //productions.sort();
                 //let mut iter = productions.iter().map( |&(_, ref exp)| exp);
                 // In general, we shouldn't
                 // be able to fail for this section.
                 assert_eq!(stack.len(), 0);
                 let mut error = Ok::<_, ::Error>(());
-                unsafe {
-                    let mut productions = productions_.get();
+                let productions = unsafe {
+                    let productions = mem::transmute::<_, &[(&[Ascii], ParseExpr)]>(productions);
                     //for &(_, mut exp) in productions.map_in() {
-                    productions_.unwrap().map_in_place( |(tag, mut pexp)| {
+                    productions_.map_in_place( |(tag, mut pexp)| {
                         let mut term = ProdEnd;
                         let mut terms: StackVec<ParseTerm> = ::std::mem::uninitialized();
                         let mut factors: StackVec<UnsafeCell<ParseFactor>> = ::std::mem::uninitialized();
@@ -404,16 +405,17 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                                 for pfactor in t.iter() {
                                     let mut factor = match *pfactor.get() {
                                         Ident(i) => match
-                                            (*productions)[].binary_search(|&/*ParseProduction*/(id, _)| {
+                                            productions.binary_search(|&/*ParseProduction*/(id, _)| {
                                                 id.cmp(i)}) {
                                             slice::Found(id) => {
                                                 //println!("{}", pfactor as *const _);
-                                                ::Ref(mem::transmute((*productions)[id].1))
+                                                ::Ref(mem::transmute(productions[id].1))
                                             }
                                             _ => {
                                                 // Acknowledge the error and continue, since we
                                                 // can't exit early.
                                                 error = Err(::MissingProduction);
+                                                println!("{}", productions.len());
                                                 ::Ref(mem::transmute(/*(*pfactor.get()*/ pexp_root))
                                             }
                                         },
@@ -459,7 +461,8 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         mem::transmute((tag, pexp_root))
                     })
                     //mem::transmute(productions)
-                }
+                };
+                try!(error.and(Ok(productions)))
                 //Vec::new()
                 //unsafe { mem::transmute(productions_) }
             }}),
