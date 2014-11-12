@@ -11,6 +11,7 @@ use std::collections::hash_map;
 use std::hash::{Hasher, Writer};
 use std::hash::sip::{SipHasher, SipState};
 use std::mem;
+use std::raw::Repr;
 use std::slice;
 use std::slice::BoxedSlicePrelude;
 //use std::collections::PriorityQueue;
@@ -372,9 +373,20 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 //let mut productions = productions_.into_sorted_vec();
                 let mut productions = productions_;
                 productions.sort_by( |a, b| a.0.cmp(b.0));
+                let mut productions_ = UnsafeCell::new(productions);
                 //productions.sort();
+                //let mut iter = productions.iter().map( |&(_, ref exp)| exp);
+                // In general, we shouldn't
+                // be able to fail for this section.
+                assert_eq!(stack.len(), 0);
+                let mut error = Ok::<_, ::Error>(());
                 unsafe {
-                    {
+                    let mut productions = productions_.get();
+                    //for &(_, mut exp) in productions.map_in() {
+                    productions_.unwrap().map_in_place( |(tag, mut pexp)| {
+                        let mut term = ProdEnd;
+                        let mut terms: StackVec<ParseTerm> = ::std::mem::uninitialized();
+                        let mut factors: StackVec<UnsafeCell<ParseFactor>> = ::std::mem::uninitialized();
                         // Invariants: must read pfactors in order (never repeat a read), and must read
                         // them before they are written to (otherwise, we could accidentally ready a
                         // factor masquerading as a pfactor).  The reason this hack is necessary is
@@ -383,29 +395,70 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         // reason we don't want to tag it (or just keep an extra variant around) is for
                         // type safety: once the parsing phase is over we should only have Refs, never
                         // Idents.
-                        for &/*ParseProduction*/(_, exp) in productions.iter() {
-                            for t in exp.iter() {
+                        //let mut iter = productions.iter().map( |&(_, ref exp)| exp);
+                        //
+                        //for &(_, exp) in productions.iter()
+                        let pexp_root = pexp;
+                        loop {
+                            for t in pexp.iter() {
                                 for pfactor in t.iter() {
-                                    let factor = match *pfactor.get() {
+                                    let mut factor = match *pfactor.get() {
                                         Ident(i) => match
-                                            productions[].binary_search(|&/*ParseProduction*/(id, _)| {
+                                            (*productions)[].binary_search(|&/*ParseProduction*/(id, _)| {
                                                 id.cmp(i)}) {
                                             slice::Found(id) => {
-                                                ::Ref(mem::transmute(productions[id].1))
+                                                //println!("{}", pfactor as *const _);
+                                                ::Ref(mem::transmute((*productions)[id].1))
                                             }
-                                            _ => return Err(::MissingProduction),
+                                            _ => {
+                                                // Acknowledge the error and continue, since we
+                                                // can't exit early.
+                                                error = Err(::MissingProduction);
+                                                ::Ref(mem::transmute(/*(*pfactor.get()*/ pexp_root))
+                                            }
                                         },
                                         Lit(l) => ::Lit(l),
-                                        Opt(e) => ::Opt(mem::transmute(e)),
-                                        Rep(e) => ::Rep(mem::transmute(e)),
-                                        Group(e) => ::Group(mem::transmute(e)),
+                                        Opt(e) => {
+                                            let e = mem::transmute(e);
+                                            terms.stk[0] = mem::transmute(e);
+                                            stack.push((terms, factors, term));
+                                            terms = ::std::mem::uninitialized();
+                                            factors = ::std::mem::uninitialized();
+                                            ::Opt(e)
+                                        },
+                                        Rep(e) => {
+                                            let e = mem::transmute(e);
+                                            terms.stk[0] = mem::transmute(e);
+                                            stack.push((terms, factors, term));
+                                            terms = ::std::mem::uninitialized();
+                                            factors = ::std::mem::uninitialized();
+                                            ::Rep(e)
+                                        },
+                                        Group(e) => {
+                                            let e = mem::transmute(e);
+                                            terms.stk[0] = mem::transmute(e);
+                                            stack.push((terms, factors, term));
+                                            terms = ::std::mem::uninitialized();
+                                            factors = ::std::mem::uninitialized();
+                                            ::Group(e)
+                                        },
                                     };
-                                    *pfactor.get() = mem::transmute(factor)
+                                    //let old_factor = factor;
+                                    let new_factor = pfactor.get() as *mut ::Factor<'b>;
+                                    //*(pfactor.get() as *mut ::Factor<'b>) = factor;
+                                    *new_factor = factor;
+                                    //factor = mem::transmute(*pfactor.get());
+                                    //println!("{} === {}", old_factor, factor);
                                 }
                             }
+                            pexp = match stack.pop() {
+                                Some((StackVec { stk: [root, ..] , ..}, _, _)) => mem::transmute::<_, ParseExpr>(root),
+                                None => break
+                            };
                         }
-                    }
-                    mem::transmute(productions)
+                        mem::transmute((tag, pexp_root))
+                    })
+                    //mem::transmute(productions)
                 }
                 //Vec::new()
                 //unsafe { mem::transmute(productions_) }
