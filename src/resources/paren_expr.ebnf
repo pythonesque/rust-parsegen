@@ -1,0 +1,4 @@
+{
+Expr = Factor | '(' Expr ')';
+Factor = 'num' | '+' Factor | Factor '+' 'num';
+}"http://david.tribble.com/text/lrk_parsing.html"

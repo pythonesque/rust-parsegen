@@ -1,4 +1,4 @@
-#![feature(unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing)]
+#![feature(associated_types,unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing)]
 
 extern crate arena;
 extern crate libc;
@@ -8,9 +8,11 @@ extern crate test;
 
 //use rustc::util::nodemap::FnvHashMap;
 use std::fmt;
+use std::raw::Repr;
 
 pub use parser::{Parser, ParserContext};
 
+mod lalr;
 mod scanner;
 mod parser;
 
@@ -88,7 +90,7 @@ fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
 impl<'a> fmt::Show for Factor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Ref(e) => write!(f, "Ref {}", e.as_ptr()),
+            Ref(e) => write!(f, "Ref {}({})", e.repr().data, e.repr().len),
             Lit(s) => write!(f, "\"{}\"", s.as_str_ascii().escape_default()),
             Opt(e) => show_expr(f, "[ ", e, " ]"),
             Rep(e) => show_expr(f, "{ ", e, " }"),
@@ -128,12 +130,15 @@ mod tests {
 
     const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
 
+    const PAREN_EXPR: &'static [u8] = include_bin!("resources/paren_expr.ebnf");
+
     #[bench]
     fn bench_decode(b: &mut Bencher)
     {
         //let string = EBNF_EBNF_STRING.to_ascii();
         let string = //EBNF_EBNF_STRING
                      ASN1_EBNF_STRING
+                     //PAREN_EXPR
                      //ONE_LINE_EBNF_STRING
                      .to_ascii();
         /*let ref mut parser = Parser::with_capacity(1024);

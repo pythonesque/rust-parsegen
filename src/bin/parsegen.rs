@@ -45,7 +45,7 @@ fn main() {
         return;
     }
     if matches.free.is_empty() {
-        parse(parser, io::stdin(), output) 
+        parse(parser, io::stdin(), output)
     } else {
         for path in matches.free.iter().map ( |p| Path::new(p[]) ) {
             let file = File::open(&path).unwrap();
