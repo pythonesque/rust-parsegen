@@ -24,7 +24,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
     let mut queue = ebnf.productions.iter().map( |&(_, e)| e ).collect::<RingBuf<_>>();
     let mut first = ebnf.productions.iter()
-        .map( |&(_, e)| (e.as_ptr().to_uint(), HashSet::new()) )
+        .map( |&(_, e)| (e.as_ptr().to_uint().swap_bytes(), HashSet::new()) )
         .collect::<TrieMap<_>>();
     // TODO: Error here if there were duplicate production entries, or something.
     let epsilon = "".to_ascii(); // Hopefully zero runtime cost :)
@@ -32,7 +32,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
     loop {
         // 2. Pop nonterminal X from the head of the queue
         let x = match queue.pop_front() { Some(x) => x, None => break };
-        let xh = x.as_ptr().to_uint(); // Index by const ptr, because we can :)
+        let xh = x.as_ptr().to_uint().swap_bytes(); // Index by const ptr, because we can :)
         let old_len = first[xh].len(); // Initial length of first set.
 
         // Compute a partial first(X) set for X
@@ -55,7 +55,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
                         break;
                     },
                     Some(::Ref(p)) => { // X : P B ... with nonterminal symbol P
-                        let ph = p.as_ptr().to_uint();
+                        let ph = p.as_ptr().to_uint().swap_bytes();
                         if ph != xh {
                             // add to first(X) all terminal symbols other than epsilon
                             // that are currently in first(P).
@@ -68,7 +68,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
                         }
                     },
                     Some(::Opt(p)) | Some(::Rep(p)) => { // X : [P] B, P != X
-                        let ph = p.as_ptr().to_uint();
+                        let ph = p.as_ptr().to_uint().swap_bytes();
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
                         let mut p_first = match first.entry(ph) {
@@ -89,7 +89,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
                         // Because first(p) contains epsilon, we always continue here.
                     },
                     Some(::Group(p)) => { // X : (P) B, P != X
-                        let ph = p.as_ptr().to_uint();
+                        let ph = p.as_ptr().to_uint().swap_bytes();
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
                         let mut p_first = match first.entry(ph) {
@@ -199,9 +199,9 @@ mod tests {
         let mut parser = Parser::<SipHasher, SipState>::with_capacity(8).unwrap();
         let ctx = ParserContext::new(8);
         let string = //EBNF_EBNF_STRING
-                     //ASN1_EBNF_STRING
+                     ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
-                     PAREN_EXPR
+                     //PAREN_EXPR
                      .to_ascii();
         let ebnf = parser.parse(&ctx, string).unwrap();
         println!("{}", ebnf);
