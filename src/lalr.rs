@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{hash_map, trie_map, HashMap, HashSet, RingBuf, VecMap};
+use std::collections::{hash_map, trie_map, BitvSet, HashMap, HashSet, RingBuf, VecMap};
 
 struct Table<T> {
     table: T,
@@ -18,20 +18,21 @@ enum Action<S, R> {
 
 trait Rule<E, N> {}
 
+const EPSILON: uint = 0;
 
-pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
+pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
     // http://david.tribble.com/text/lrk_parsing.html
 
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
     let mut queue = range(0, ebnf.productions.len()).collect::<RingBuf<_>>();
-    let mut first = Vec::from_elem(ebnf.productions.len(), RefCell::new(HashSet::new()));
+    let mut first = Vec::from_elem(ebnf.productions.len(), RefCell::new(BitvSet::with_capacity(ebnf.terminals.len())));
     // TODO: Error here if there were duplicate production entries, or something.
-    let epsilon = "".to_ascii(); // Hopefully zero runtime cost :)
 
     loop {
         // 2. Pop nonterminal X from the head of the queue
         let xh = match queue.pop_front() { Some(xh) => xh, None => break };
         let mut x_first = first[xh].borrow_mut();
+        let mut x_contains_epsilon = x_first.contains(&EPSILON);
         let old_len = x_first.len(); // Initial length of first set.
 
         let x = ebnf.productions[xh].1;
@@ -42,10 +43,11 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
                 match fs.next().map( |&f| f) {
                     None => { // X : epsilon
                         // 3. Add epsilon to first(X)
-                        x_first.insert(epsilon);
+                        x_first.insert(EPSILON);
                         break
                     },
-                    Some(::Lit(t)) => { // X : t B ... with terminal symbol t as the leftmost RHS symbol
+                    Some(::Lit(EPSILON, _)) => continue, // Epsilon terminals are ignored
+                    Some(::Lit(t, _)) => { // X : t B ... with terminal symbol t as the leftmost RHS symbol
                         // 4. Add symbol t to first(X)
                         x_first.insert(t);
                         // Always break here, because we don't have a production so its first set
@@ -58,28 +60,31 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
                             // that are currently in first(P).
                             // (first(P) may still be incomplete at this point.)
                             let p_first = first[ph].borrow();
-                            let contains_epsilon = p_first.contains(&epsilon);
-                            x_first.extend(p_first.iter().filter( |&&x| x != epsilon).map( |&x| x));
+                            let contains_epsilon = p_first.contains(&EPSILON);
+                            x_first.union_with(&*p_first);
                             // Repeat only if first(p) contains epsilon
                             if !contains_epsilon { break }
+                            if !x_contains_epsilon { x_first.remove(&EPSILON); }
                         }
                     },
                     Some(::Opt(ph)) | Some(::Rep(ph)) => { // X : [P] B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
                         let mut p_first = first[ph].borrow_mut();
-                        p_first.insert(epsilon);
-                        x_first.extend(p_first.iter().filter( |&&x| x != epsilon).map( |&x| x));
+                        p_first.insert(EPSILON);
+                        x_first.union_with(&*p_first);
+                        if !x_contains_epsilon { x_first.remove(&EPSILON); }
                         // Because first(p) contains epsilon, we always continue here.
                     },
                     Some(::Group(ph)) => { // X : (P) B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
                         let p_first = first[ph].borrow();
-                        let contains_epsilon = p_first.contains(&epsilon);
-                        x_first.extend(p_first.iter().filter( |&&x| x != epsilon).map( |&x| x));
+                        let contains_epsilon = p_first.contains(&EPSILON);
+                        x_first.union_with(&*p_first);
                         // Repeat only if first(p) contains epsilon
                         if !contains_epsilon { break }
+                        if !x_contains_epsilon { x_first.remove(&EPSILON); }
                     },
                 }
             }
@@ -96,6 +101,40 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
     }
     first.into_iter().map( |set| set.unwrap() ).collect()
 }
+
+enum Lookahead<'a> {
+    End,
+    Symbol(&'a Ascii),
+}
+
+/*struct Item<'a> {
+    lhs: uint,
+    term: ::ParseTerm<'a>,
+    lookahead: Lookahead<'a>,
+}*/
+
+/*pub fn closure<'a>(kernel: Item<'a>, ebnf: &::Ebnf<'a>, first: &[HashSet<&'a Ascii>]) {
+    let mut set = HashSet::new();
+    let mut queue = RingBuf::new();
+    queue.push_back(kernel);
+    loop {
+        let item = match queue.pop_ront() { Some(i) => i, None => break };
+        if set.insert(item) {
+            let mut new_term = item.term.split_at(1);
+            match item[0] {
+                Lit(_) => continue,
+                Ref(i) | Group(i) => {
+                    for &lookahead in first[i].iter() {
+                        queue.push_back(Item { lhs: i, term: ebnf.productions[i].1
+                    }
+                }
+            }
+            for &lookahead in first[item.lhs].iter() {
+                queue.push_back(Item { lhs: item.term});
+            }
+        }
+    }
+}*/
 
 /*impl<T, R, Actions, Gotos, State, Terminal, NonTerminal> Table<T>
     where T: Map<State, Row<Actions, Gotos>>,
@@ -173,8 +212,8 @@ mod tests {
     pub fn test_first_set() {
         let mut parser = Parser::<SipHasher, SipState>::with_capacity(8).unwrap();
         let ctx = ParserContext::new(8);
-        let string = //EBNF_EBNF_STRING
-                     ASN1_EBNF_STRING
+        let string = EBNF_EBNF_STRING
+                     //ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
                      //PAREN_EXPR
                      .to_ascii();

@@ -34,12 +34,17 @@ pub struct Ebnf<'a> {
 
     //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
     productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
+    terminals: Vec<&'a [Ascii]>,
     comment: Option<&'a [Ascii]>,
 }
 
 impl<'a> fmt::Show for Ebnf<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "Ebnf {{ title: {}, productions: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
+        try!(write!(f, "Ebnf {{ title: {}, terminals: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
+        for (index, &t) in self.terminals.iter().enumerate() {
+            try!(write!(f, "#{} = \"{}\"\n", index, t.as_str_ascii().escape_default()));
+        }
+        try!(write!(f, "}}, productions: {{\n"));
         //for (&id, &e) in self.productions.iter() {
         for (index, &(id, e)) in self.productions.iter().enumerate() {
             try!(write!(f, "<{}> {}: ", index, id.as_str_ascii()));
@@ -56,7 +61,7 @@ pub type Term<'a> = &'a [Factor<'a>];
 #[deriving(PartialEq)]
 pub enum Factor<'a> {
     Ref(uint),
-    Lit(&'a [Ascii]),
+    Lit(uint, uint),
     Opt(uint),
     Rep(uint),
     Group(uint),
@@ -90,8 +95,8 @@ fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
 impl<'a> fmt::Show for Factor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Ref(e) => write!(f, "<{}>", e ),
-            Lit(s) => write!(f, "\"{}\"", s.as_str_ascii().escape_default()),
+            Ref(e) => write!(f, "<{}>", e),
+            Lit(s, _) => write!(f, "#{}", s),
             Opt(e) => write!(f, "[ <{}> ]", e),//show_expr(f, "[ ", e, " ]"),
             Rep(e) => write!(f, "{{ <{}> }}", e),//show_expr(f, "{ ", e, " }"),
             Group(e) => write!(f, "( <{}> )", e), //show_expr(f, "( ", e, " )"),
