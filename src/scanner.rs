@@ -112,6 +112,9 @@ impl<'a> Tokens<'a> {
                             continue
                         },
                         // Identifier start
+                        // NOTE: We rely on the fact that identifiers have nonzero length for
+                        // correctness.  This is not presently an issue, but it is something to be
+                        // aware of if you need to touch this code in the future.
                         _ => {
                             while self.ptr != self.end {
                                 static TBL: [bool, .. 256 as uint] = [

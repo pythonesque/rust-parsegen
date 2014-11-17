@@ -11,9 +11,10 @@ use std::collections::hash_map;
 use std::hash::{Hasher, Writer};
 use std::hash::sip::{SipHasher, SipState};
 use std::mem;
+use std::ptr;
 use std::raw::Repr;
 use std::slice;
-use std::slice::BoxedSlicePrelude;
+use std::slice::{BoxedSlicePrelude, raw};
 //use std::collections::PriorityQueue;
 
 /*pub struct FnvHasherDefault(pub FnvHasher);
@@ -60,9 +61,25 @@ type ParseTerm<'a> = &'a [UnsafeCell<ParseFactor<'a>>];
 enum ParseFactor<'a> {
     Ident(&'a [Ascii]),
     Lit(&'a [Ascii]),
-    Opt(ParseExpr<'a>),
-    Rep(ParseExpr<'a>),
-    Group(ParseExpr<'a>),
+    // Here be hacks: the length of the ParseExpr array is initially zero.  We do this because the
+    // data in the pointer isn't initially valid.
+    //
+    // The reason this is important is that anonymous expressions live in the same location as the
+    // identifier part of the (name, expr) pairs in our productions vector.  Before we sort, we
+    // want to move all these to the end of the array (so we don't accidentally reference them
+    // during the sort), which requires updating the pointer in the fields below.  These fields
+    // will become inaccurate as the vector grows, so we also can't rely on their initial values to
+    // be correct--instead, we point directly into them from the data pointer of the expr part of
+    // the pair (it would normally be interpreted as a pointer into Ascii data, but in this case
+    // the length will be zero so we're safe).
+    //
+    // To make this work, we rely on the scanner to never give us zero-length Idents.
+    // We actually might still be able to support them since we could identify them by making the
+    // data pointer of the slice 0 for such identifiers, but I don't want to think about it for
+    // now.
+    Opt(uint),
+    Rep(uint),
+    Group(uint),
 }
 
 enum ExprType {
@@ -180,8 +197,10 @@ macro_rules! parse_factor {
     }
 }}
 
+static EMPTY_ASCII: [Ascii, .. 0] = [];
+
 macro_rules! parse_terms {
-    ($tokens:expr, $ctx: expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
+    ($tokens:expr, $ctx: expr, $productions: expr, $anon_factors: expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
         'term: loop {
             // Parse first factor
             if $factors.len == 0 {
@@ -199,7 +218,12 @@ macro_rules! parse_terms {
             Some((ts, fs, t)) => {
                 $terms.push($factors.into_slice(&$ctx.factors).unwrap(), &$ctx.vec_terms);
                 $factors = fs;
-                $factors.push(UnsafeCell::new($expr_type($terms.into_slice(&$ctx.terms).unwrap())), &$ctx.vec_factors);
+                $anon_factors += 1;
+                $factors.push(UnsafeCell::new($expr_type($anon_factors)), &$ctx.vec_factors);
+                $productions.push(UnsafeCell::new((
+                    EMPTY_ASCII[],
+                    $terms.into_slice(&$ctx.terms).unwrap()
+                )));
                 $terms = ts;
                 $term = t;
             }, None => { $term_lifetime }
@@ -208,7 +232,7 @@ macro_rules! parse_terms {
 }
 
 macro_rules! parse_expression {
-    ($tokens:expr, $ctx:expr, $stack:expr) => {{
+    ($tokens:expr, $ctx:expr, $productions: expr, $anon_factors: expr, $stack:expr) => {{
         let mut term = ProdEnd;
         let mut terms: StackVec<ParseTerm>;
         let mut factors: StackVec<UnsafeCell<ParseFactor>>;
@@ -220,10 +244,10 @@ macro_rules! parse_expression {
                 factors.len = 0;
                 loop {
                     match term {
-                        ProdEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, (|_| unreachable!()), s::Semi, break 'expr, continue 'expr),
-                        OptEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
-                        RepEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
-                        GroupEnd => parse_terms!($tokens, $ctx, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
+                        ProdEnd => parse_terms!($tokens, $ctx, $productions, $anon_factors, $stack, terms, factors, term, (|_| unreachable!()), s::Semi, break 'expr, continue 'expr),
+                        OptEnd => parse_terms!($tokens, $ctx, $productions, $anon_factors, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
+                        RepEnd => parse_terms!($tokens, $ctx, $productions, $anon_factors, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
+                        GroupEnd => parse_terms!($tokens, $ctx, $productions, $anon_factors, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
                     }
                 }
             }
@@ -335,6 +359,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         //let mut productions = BTreeMap::with_b(23);
         let mut productions_ = Vec::with_capacity(capacity);
         //let mut productions_ = PriorityQueue::with_capacity(capacity);
+        let mut anon_factors = 0;
         loop {
             match tokens.next() {
                 /*s::Ident => {
@@ -349,7 +374,9 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         hash_map::Occupied(_) => return Err(::DuplicateProduction),
                     }*/
                     //productions_.push((id, parse_expression!(tokens, ctx, stack)));
-                    productions_.push(/*ParseProduction*/(id, parse_expression!(tokens, ctx, stack)));
+                    //productions_.push(/*ParseProduction*/UnsafeCell::new((id, parse_expression!(tokens, ctx, productions_, anon_factors, stack))));
+                    let e = parse_expression!(tokens, ctx, productions_, anon_factors, stack);
+                    productions_.push(UnsafeCell::new((id, e)));
                     // Should be protected by the ParserGuard so don't worry about failing here.
                     //tx.send(unsafe { mem::transmute(Some((id, parse_expression!(tokens, ctx, stack)))) })
                 },
@@ -369,25 +396,36 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
             s::EOF => Ok(::Ebnf { title: title, comment: comment, productions: {
                 //tx.send(None); // We're done!
                 //productions_ = rx.recv().unwrap(); // If it's not Some(x) that's a logic bug.
-                //productions = productions_.into_iter().collect();
-                //let mut productions = productions_.into_sorted_vec();
-                let mut productions = productions_;
-                productions.sort_by( |a, b| a.0.cmp(b.0));
+                let mut productions = unsafe {
+                    let mut first = productions_.as_ptr();
+                    let mut last = first.offset(productions_.len() as int);
+                    let mut first_inner = ptr::read((&*first).get() as *const (&[Ascii], ParseExpr));
+                    while first != last {
+                        if first_inner.0.len() == 0 {
+                            // This is an unnamed production.  Swap it with the last production and
+                            // decrement.
+                            last = last.offset(-1);
+                            let last_inner = ptr::read((&*last).get() as *const _);
+                            *((*last).get() as *mut _) = first_inner;
+                            first_inner = last_inner;
+                        } else {
+                            *((*first).get() as *mut _) = first_inner;
+                            first = first.offset(1);
+                            first_inner = ptr::read((&*first).get() as *const _);
+                        }
+                    }
+                    mem::transmute::<_, Vec<(&[Ascii], ParseExpr)>>(productions_)
+                };
+                let len = productions.len();
+                productions.slice_mut(0, len - anon_factors).sort_by( |a, b| a.0.cmp(b.0) );
                 let productions_ = productions;
                 let productions = productions_[].repr();
-                //productions.sort();
-                //let mut iter = productions.iter().map( |&(_, ref exp)| exp);
-                // In general, we shouldn't
-                // be able to fail for this section.
-                assert_eq!(stack.len(), 0);
+                // In general, we shouldn't be able to fail for this section.
                 let mut error = Ok::<_, ::Error>(());
                 let productions = unsafe {
                     let productions = mem::transmute::<_, &[(&[Ascii], ParseExpr)]>(productions);
-                    //for &(_, mut exp) in productions.map_in() {
-                    productions_.map_in_place( |(tag, mut pexp)| {
-                        let mut term = ProdEnd;
-                        let mut terms: StackVec<ParseTerm> = ::std::mem::uninitialized();
-                        let mut factors: StackVec<UnsafeCell<ParseFactor>> = ::std::mem::uninitialized();
+                    let search_productions = productions[0 .. productions.len() - anon_factors ];
+                    productions_.map_in_place( |(tag, pexp)| {
                         // Invariants: must read pfactors in order (never repeat a read), and must read
                         // them before they are written to (otherwise, we could accidentally ready a
                         // factor masquerading as a pfactor).  The reason this hack is necessary is
@@ -396,75 +434,30 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         // reason we don't want to tag it (or just keep an extra variant around) is for
                         // type safety: once the parsing phase is over we should only have Refs, never
                         // Idents.
-                        //let mut iter = productions.iter().map( |&(_, ref exp)| exp);
-                        //
-                        //for &(_, exp) in productions.iter()
-                        let pexp_root = pexp;
-                        loop {
-                            for t in pexp.iter() {
-                                for pfactor in t.iter() {
-                                    let mut factor = match *pfactor.get() {
-                                        Ident(i) => match
-                                            productions.binary_search(|&/*ParseProduction*/(id, _)| {
-                                                id.cmp(i)}) {
-                                            slice::Found(id) => {
-                                                //println!("{}", pfactor as *const _);
-                                                ::Ref(mem::transmute(productions[id].1))
-                                            }
-                                            _ => {
-                                                // Acknowledge the error and continue, since we
-                                                // can't exit early.
-                                                error = Err(::MissingProduction);
-                                                println!("{}", productions.len());
-                                                ::Ref(mem::transmute(/*(*pfactor.get()*/ pexp_root))
-                                            }
-                                        },
-                                        Lit(l) => ::Lit(l),
-                                        Opt(e) => {
-                                            let e = mem::transmute(e);
-                                            terms.stk[0] = mem::transmute(e);
-                                            stack.push((terms, factors, term));
-                                            terms = ::std::mem::uninitialized();
-                                            factors = ::std::mem::uninitialized();
-                                            ::Opt(e)
-                                        },
-                                        Rep(e) => {
-                                            let e = mem::transmute(e);
-                                            terms.stk[0] = mem::transmute(e);
-                                            stack.push((terms, factors, term));
-                                            terms = ::std::mem::uninitialized();
-                                            factors = ::std::mem::uninitialized();
-                                            ::Rep(e)
-                                        },
-                                        Group(e) => {
-                                            let e = mem::transmute(e);
-                                            terms.stk[0] = mem::transmute(e);
-                                            stack.push((terms, factors, term));
-                                            terms = ::std::mem::uninitialized();
-                                            factors = ::std::mem::uninitialized();
-                                            ::Group(e)
-                                        },
-                                    };
-                                    //let old_factor = factor;
-                                    let new_factor = pfactor.get() as *mut ::Factor<'b>;
-                                    //*(pfactor.get() as *mut ::Factor<'b>) = factor;
-                                    *new_factor = factor;
-                                    //factor = mem::transmute(*pfactor.get());
-                                    //println!("{} === {}", old_factor, factor);
-                                }
+                        for t in pexp.iter() {
+                            for pfactor in t.iter() {
+                                let mut factor = match *pfactor.get() {
+                                    Ident(i) => ::Ref(mem::transmute(match
+                                        search_productions.binary_search(|&(id, _)| id.cmp(i)) {
+                                        slice::Found(id) => productions[id].1,
+                                        _ => {
+                                            // Acknowledge the error and continue (can't exit).
+                                            error = Err(::MissingProduction);
+                                            pexp
+                                        }
+                                    })),
+                                    Lit(l) => ::Lit(l),
+                                    Opt(id) => ::Opt(mem::transmute(productions[len - id].1)),
+                                    Rep(id) => ::Rep(mem::transmute(productions[len - id].1)),
+                                    Group(id) => ::Group(mem::transmute(productions[len - id].1)),
+                                };
+                                *(pfactor.get() as *mut _) = factor;
                             }
-                            pexp = match stack.pop() {
-                                Some((StackVec { stk: [root, ..] , ..}, _, _)) => mem::transmute::<_, ParseExpr>(root),
-                                None => break
-                            };
                         }
-                        mem::transmute((tag, pexp_root))
+                        mem::transmute((tag, pexp))
                     })
-                    //mem::transmute(productions)
                 };
                 try!(error.and(Ok(productions)))
-                //Vec::new()
-                //unsafe { mem::transmute(productions_) }
             }}),
             _ => Err(::ExpectedEOF),
         }
