@@ -102,6 +102,29 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
     first.into_iter().map( |set| set.unwrap() ).collect()
 }
 
+pub fn first_for<'a>(term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first: &[BitvSet]) -> BitvSet {
+    let mut set = BitvSet::with_capacity(ebnf.terminals.len());
+    for &f in term.iter() {
+        match f {
+            ::Lit(EPSILON, _) => continue,
+            ::Lit(t, _) => {
+                set.insert(t);
+                return set;
+            },
+            ::Ref(s) | ::Group(s) => {
+                set.union_with(&first[s]);
+                if !set.remove(&EPSILON) { return set }
+            },
+            ::Opt(s) | ::Rep(s) => {
+                set.union_with(&first[s]);
+                set.remove(&EPSILON);
+            }
+        }
+    }
+    set.insert(lookahead);
+    return set;
+}
+
 enum Lookahead<'a> {
     End,
     Symbol(&'a Ascii),
@@ -112,6 +135,62 @@ enum Lookahead<'a> {
     term: ::ParseTerm<'a>,
     lookahead: Lookahead<'a>,
 }*/
+
+
+//+THIS method is the bottleneck for the entire program!
+
+//+THIS algorithm can be replaced with a better algorithm which
+//+ executes in O(2s) time and O((n+t)r) space, where s = this.m_size,
+//+ r = Grammar.m_nRules, n = Grammar.m_nNonterms, t = Grammar.m_nTerms;
+//+
+//+Algorithm:
+//+ // initialize
+//+ init ruleTable,
+//+   each ruleTable[rI][s] represents closure item [rI. B -> . X Y, s];
+//+   for each ruleTable[rI],
+//+     ruleTable[rI] = null;
+//+ mark1 += 2, mark2 += 2;
+//+ if mark2 > BYTE_MAX,
+//+   reset the ruleTable, and mark1 = 0, mark2 = 1;
+//+ // generate closures for kernel items
+//+ for each kernel item in this set, [rN. A -> B . S T, u],
+//+   if ruleTable[rN] is null,
+//+     ruleTable[rN] = allocate symbol table, byte array[n+t];
+//+   // generate closure items from the kernel item
+//+   for each rule rG with S as LHS (rule group for S), [rG. S -> X Y],
+//+     for each symbol A in first(S T u),
+//+       set ruleTable[rG][A] = mark1;
+//+   end for;
+//+ end for;
+//+ // generate closures for non-kernel closure items
+//+ do
+//+   for each rule rI where ruleTable[rI] not null,
+//+     for each symbol S in ruleTable[rI],
+//+       if ruleTable[rI][S] == mark1,
+//+         // generate closure items from [rI. B -> . X Y, S],
+//+         for each rule rG with X as LHS (rule group for X),
+//+           if ruleTable[rG][X] != mark2,
+//+             set ruleTable[rG][X] = mark1;
+//+         set ruleTable[rI][S] = mark2;
+//+         didWork = true;
+//+       end if;
+//+     end for;
+//+   end for;
+//+ while didWork;
+//+ // convert ruleTable entries into closure items
+//+ for each rule rI where ruleTable[rI] not null,
+//+   for each symbol S in ruleTable[rI],
+//+     if ruleTable[rI][S] == mark1|mark2,
+//+       create closure item, [rI. B -> . X Y, S];
+//+       add item to this set;
+//+     end if;
+//+   end for;
+//+ end for;
+//+ // clean up
+//+ for each ruleTable[rI],
+//+   deallocate (recache) ruleTable[rI];
+//+ end.
+//pub fn generate_
 
 /*pub fn closure<'a>(kernel: Item<'a>, ebnf: &::Ebnf<'a>, first: &[HashSet<&'a Ascii>]) {
     let mut set = HashSet::new();
@@ -209,11 +288,11 @@ mod tests {
     const PAREN_EXPR: &'static [u8] = include_bin!("resources/paren_expr.ebnf");
 
     #[test]
-    pub fn test_first_set() {
+    pub fn first_set_t() {
         let mut parser = Parser::<SipHasher, SipState>::with_capacity(8).unwrap();
-        let ctx = ParserContext::new(8);
-        let string = EBNF_EBNF_STRING
-                     //ASN1_EBNF_STRING
+        let ctx = ParserContext::new(1024);
+        let string = //EBNF_EBNF_STRING
+                     ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
                      //PAREN_EXPR
                      .to_ascii();
@@ -223,8 +302,27 @@ mod tests {
         println!("{}", first);
     }
 
+    #[test]
+    pub fn first_for() {
+        let mut parser = Parser::<SipHasher, SipState>::with_capacity(8).unwrap();
+        let ctx = ParserContext::new(16);
+        let string = //EBNF_EBNF_STRING
+                     //ASN1_EBNF_STRING
+                     //ONE_LINE_EBNF_STRING
+                     PAREN_EXPR
+                     .to_ascii();
+        let ebnf = parser.parse(&ctx, string).unwrap();
+        println!("{}", ebnf);
+        let firsts = lalr::first(&ebnf);
+        println!("{}", firsts);
+        let end = ebnf.terminals.len();
+        let first = lalr::first_for(ebnf.productions[0].1[1][1 .. ], end, &ebnf, firsts[]);
+        // {1, 3, 4}
+        println!("{}", first);
+    }
+
     #[bench]
-    pub fn bench_first_setb(b: &mut Bencher) {
+    pub fn first_set_b(b: &mut Bencher) {
         let mut parser = Parser::<SipHasher, SipState>::with_capacity(1024).unwrap();
         //let ctx = ParserContext::new(8);
         let string = //EBNF_EBNF_STRING

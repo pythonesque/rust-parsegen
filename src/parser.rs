@@ -168,7 +168,7 @@ impl<'a,T> StackVec<'a, T> where T: 'a {
 
 
 macro_rules! parse_factor {
-    ($tokens:expr, $ctx:expr, $terminals: expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt)|*) => {{
+    ($tokens:expr, $ctx:expr, $terminals:expr, $count_terms:expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt)|*) => {{
         match $tokens.next() {
             s::Ident(i) =>$factors.push(UnsafeCell::new(Ident(i)), &$ctx.vec_factors),
             //s::Ident =>$factors.push(UnsafeCell::new(Ident($tokens.tok)), &$ctx.vec_factors),
@@ -180,11 +180,13 @@ macro_rules! parse_factor {
             s::LBracket => {
                 $stack.push(($terms, $factors, $term));
                 $term = OptEnd;
+                $count_terms += 1;
                 $expr_lifetime
             },
             s::LBrace => {
                 $stack.push(($terms, $factors, $term));
                 $term = RepEnd;
+                $count_terms += 1;
                 $expr_lifetime
             },
             s::LParen => {
@@ -204,15 +206,16 @@ macro_rules! parse_factor {
 static EMPTY_ASCII: [Ascii, .. 0] = [];
 
 macro_rules! parse_terms {
-    ($tokens:expr, $ctx: expr, $productions: expr, $terminals: expr, $anon_factors: expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
+    ($tokens:expr, $ctx:expr, $productions:expr, $terminals:expr, $anon_factors:expr, $count_terms:expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
         'term: loop {
             // Parse first factor
+            $count_terms += 1;
             if $factors.len == 0 {
-                parse_factor!($tokens, $ctx, $terminals, $stack, $terms, $factors, $term, $cont_lifetime, );
+                parse_factor!($tokens, $ctx, $terminals, $count_terms, $stack, $terms, $factors, $term, $cont_lifetime, );
             }
             'factor: loop {
                 // Parse next factor OR VBar => end term OR terminal => end expression
-                parse_factor!($tokens, $ctx, $terminals, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor } | $term_token => { break 'term });
+                parse_factor!($tokens, $ctx, $terminals, $count_terms, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor } | $term_token => { break 'term });
             }
             $terms.push($factors.into_slice(&$ctx.factors).unwrap(), &$ctx.vec_terms);
             $factors = mem::uninitialized();
@@ -236,7 +239,7 @@ macro_rules! parse_terms {
 }
 
 macro_rules! parse_expression {
-    ($tokens:expr, $ctx:expr, $productions: expr, $terminals: expr, $anon_factors: expr, $stack:expr) => {{
+    ($tokens:expr, $ctx:expr, $productions:expr, $terminals:expr, $anon_factors:expr, $count_terms:expr, $stack:expr) => {{
         let mut term = ProdEnd;
         let mut terms: StackVec<ParseTerm>;
         let mut factors: StackVec<UnsafeCell<ParseFactor>>;
@@ -248,10 +251,10 @@ macro_rules! parse_expression {
                 factors.len = 0;
                 loop {
                     match term {
-                        ProdEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $stack, terms, factors, term, (|_| intrinsics::unreachable()), s::Semi, break 'expr, continue 'expr),
-                        OptEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
-                        RepEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
-                        GroupEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
+                        ProdEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, (|_| intrinsics::unreachable()), s::Semi, break 'expr, continue 'expr),
+                        OptEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
+                        RepEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
+                        GroupEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
                     }
                 }
             }
@@ -364,7 +367,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         let mut productions_ = Vec::with_capacity(capacity);
         //let mut productions_ = PriorityQueue::with_capacity(capacity);
         let mut terminals = Vec::with_capacity(capacity);
-        let mut anon_factors = 0;
+        let (mut anon_factors, mut count_terms) = (0, 0);
         loop {
             match tokens.next() {
                 /*s::Ident => {
@@ -380,7 +383,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     }*/
                     //productions_.push((id, parse_expression!(tokens, ctx, stack)));
                     //productions_.push(/*ParseProduction*/UnsafeCell::new((id, parse_expression!(tokens, ctx, productions_, anon_factors, stack))));
-                    let e = parse_expression!(tokens, ctx, productions_, terminals, anon_factors, stack);
+                    let e = parse_expression!(tokens, ctx, productions_, terminals, anon_factors, count_terms, stack);
                     productions_.push(UnsafeCell::new((id, e)));
                     // Should be protected by the ParserGuard so don't worry about failing here.
                     //tx.send(unsafe { mem::transmute(Some((id, parse_expression!(tokens, ctx, stack)))) })
@@ -480,6 +483,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     title: title,
                     comment: comment,
                     terminals: terminals,
+                    n_terms: count_terms,
                     productions: productions
                 }))
             },

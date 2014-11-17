@@ -33,6 +33,7 @@ pub struct Ebnf<'a> {
     //productions: HashMap<&'a [Ascii], Expr<'a>, XXHasher>,
 
     //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
+    n_terms: uint,
     productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
     terminals: Vec<&'a [Ascii]>,
     comment: Option<&'a [Ascii]>,
