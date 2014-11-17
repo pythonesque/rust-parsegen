@@ -41,8 +41,8 @@ impl<'a> fmt::Show for Ebnf<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "Ebnf {{ title: {}, productions: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
         //for (&id, &e) in self.productions.iter() {
-        for &(id, e) in self.productions.iter() {
-            try!(write!(f, "<{}> {}: ", e.as_ptr(), id.as_str_ascii()));
+        for (index, &(id, e)) in self.productions.iter().enumerate() {
+            try!(write!(f, "<{}> {}: ", index, id.as_str_ascii()));
             try!(show_expr(f, "", e, ".\n"));
         }
         write!(f, "}}, comment: {} }}", self.comment.as_ref().map( |s| s.as_str_ascii() ))
@@ -90,11 +90,11 @@ fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
 impl<'a> fmt::Show for Factor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Ref(e) => write!(f, "Ref {}", e ),
+            Ref(e) => write!(f, "<{}>", e ),
             Lit(s) => write!(f, "\"{}\"", s.as_str_ascii().escape_default()),
-            Opt(e) => write!(f, "[ {} ]", e),//show_expr(f, "[ ", e, " ]"),
-            Rep(e) => write!(f, "{{ {} }}", e),//show_expr(f, "{ ", e, " }"),
-            Group(e) => write!(f, "( {} )", e), //show_expr(f, "( ", e, " )"),
+            Opt(e) => write!(f, "[ <{}> ]", e),//show_expr(f, "[ ", e, " ]"),
+            Rep(e) => write!(f, "{{ <{}> }}", e),//show_expr(f, "{ ", e, " }"),
+            Group(e) => write!(f, "( <{}> )", e), //show_expr(f, "( ", e, " )"),
         }
     }
 }

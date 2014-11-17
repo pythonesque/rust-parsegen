@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{hash_map, trie_map, HashMap, HashSet, RingBuf, VecMap};
 
 struct Table<T> {
@@ -23,14 +24,15 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
 
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
     let mut queue = range(0, ebnf.productions.len()).collect::<RingBuf<_>>();
-    let mut first = Vec::from_elem(ebnf.productions.len(), HashSet::new());
+    let mut first = Vec::from_elem(ebnf.productions.len(), RefCell::new(HashSet::new()));
     // TODO: Error here if there were duplicate production entries, or something.
     let epsilon = "".to_ascii(); // Hopefully zero runtime cost :)
 
     loop {
         // 2. Pop nonterminal X from the head of the queue
         let xh = match queue.pop_front() { Some(xh) => xh, None => break };
-        let old_len = first[xh].len(); // Initial length of first set.
+        let mut x_first = first[xh].borrow_mut();
+        let old_len = x_first.len(); // Initial length of first set.
 
         let x = ebnf.productions[xh].1;
         // Compute a partial first(X) set for X
@@ -40,12 +42,12 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
                 match fs.next().map( |&f| f) {
                     None => { // X : epsilon
                         // 3. Add epsilon to first(X)
-                        first[xh].insert(epsilon);
+                        x_first.insert(epsilon);
                         break
                     },
                     Some(::Lit(t)) => { // X : t B ... with terminal symbol t as the leftmost RHS symbol
                         // 4. Add symbol t to first(X)
-                        first[xh].insert(t);
+                        x_first.insert(t);
                         // Always break here, because we don't have a production so its first set
                         // cannot contain epsilon.
                         break;
@@ -55,9 +57,9 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
                             // add to first(X) all terminal symbols other than epsilon
                             // that are currently in first(P).
                             // (first(P) may still be incomplete at this point.)
-                            let mut p_first = first[ph].clone();
-                            let contains_epsilon = p_first.remove(&epsilon);
-                            first[xh].extend(p_first.into_iter());
+                            let p_first = first[ph].borrow();
+                            let contains_epsilon = p_first.contains(&epsilon);
+                            x_first.extend(p_first.iter().filter( |&&x| x != epsilon).map( |&x| x));
                             // Repeat only if first(p) contains epsilon
                             if !contains_epsilon { break }
                         }
@@ -65,24 +67,23 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
                     Some(::Opt(ph)) | Some(::Rep(ph)) => { // X : [P] B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
-                        first[ph].insert(epsilon);
-                        let mut p_first = first[ph].clone();
-                        p_first.remove(&epsilon);
-                        first[xh].extend(p_first.into_iter());
+                        let mut p_first = first[ph].borrow_mut();
+                        p_first.insert(epsilon);
+                        x_first.extend(p_first.iter().filter( |&&x| x != epsilon).map( |&x| x));
                         // Because first(p) contains epsilon, we always continue here.
                     },
                     Some(::Group(ph)) => { // X : (P) B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
-                        let mut p_first = first[ph].clone();
-                        let contains_epsilon = p_first.remove(&epsilon);
-                        first[xh].extend(p_first.into_iter());
+                        let p_first = first[ph].borrow();
+                        let contains_epsilon = p_first.contains(&epsilon);
+                        x_first.extend(p_first.iter().filter( |&&x| x != epsilon).map( |&x| x));
                         // Repeat only if first(p) contains epsilon
                         if !contains_epsilon { break }
                     },
                 }
             }
-            if old_len != first[xh].len() || old_len == 0 {
+            if old_len != x_first.len() || old_len == 0 {
                 // If any terminals were added to first(X) in steps (3) through (6)
                 // that were not already members of first(X),
                 // or if first(X) is still empty, append X to the tail of the queue.
@@ -93,7 +94,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
             }
         }
     }
-    first
+    first.into_iter().map( |set| set.unwrap() ).collect()
 }
 
 /*impl<T, R, Actions, Gotos, State, Terminal, NonTerminal> Table<T>
