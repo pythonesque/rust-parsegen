@@ -55,11 +55,11 @@ pub type Term<'a> = &'a [Factor<'a>];
 
 #[deriving(PartialEq)]
 pub enum Factor<'a> {
-    Ref(Expr<'a>),
+    Ref(uint),
     Lit(&'a [Ascii]),
-    Opt(Expr<'a>),
-    Rep(Expr<'a>),
-    Group(Expr<'a>),
+    Opt(uint),
+    Rep(uint),
+    Group(uint),
 }
 
 fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
@@ -90,11 +90,11 @@ fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
 impl<'a> fmt::Show for Factor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Ref(e) => write!(f, "Ref {}({})", e.repr().data, e.repr().len),
+            Ref(e) => write!(f, "Ref {}", e ),
             Lit(s) => write!(f, "\"{}\"", s.as_str_ascii().escape_default()),
-            Opt(e) => show_expr(f, "[ ", e, " ]"),
-            Rep(e) => show_expr(f, "{ ", e, " }"),
-            Group(e) => show_expr(f, "( ", e, " )"),
+            Opt(e) => write!(f, "[ {} ]", e),//show_expr(f, "[ ", e, " ]"),
+            Rep(e) => write!(f, "{{ {} }}", e),//show_expr(f, "{ ", e, " }"),
+            Group(e) => write!(f, "( {} )", e), //show_expr(f, "( ", e, " )"),
         }
     }
 }

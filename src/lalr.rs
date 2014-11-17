@@ -1,4 +1,4 @@
-use std::collections::{hash_map, trie_map, HashMap, HashSet, TrieMap, TrieSet, RingBuf, VecMap};
+use std::collections::{hash_map, trie_map, HashMap, HashSet, RingBuf, VecMap};
 
 struct Table<T> {
     table: T,
@@ -18,27 +18,23 @@ enum Action<S, R> {
 trait Rule<E, N> {}
 
 
-pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
+pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<HashSet<&'a [Ascii]>> {
     // http://david.tribble.com/text/lrk_parsing.html
 
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
-    let mut queue = ebnf.productions.iter().map( |&(_, e)| e ).collect::<RingBuf<_>>();
-    let mut first = ebnf.productions.iter()
-        .map( |&(_, e)| (e.as_ptr().to_uint().swap_bytes(), HashSet::new()) )
-        .collect::<TrieMap<_>>();
+    let mut queue = range(0, ebnf.productions.len()).collect::<RingBuf<_>>();
+    let mut first = Vec::from_elem(ebnf.productions.len(), HashSet::new());
     // TODO: Error here if there were duplicate production entries, or something.
     let epsilon = "".to_ascii(); // Hopefully zero runtime cost :)
 
     loop {
         // 2. Pop nonterminal X from the head of the queue
-        let x = match queue.pop_front() { Some(x) => x, None => break };
-        let xh = x.as_ptr().to_uint().swap_bytes(); // Index by const ptr, because we can :)
+        let xh = match queue.pop_front() { Some(xh) => xh, None => break };
         let old_len = first[xh].len(); // Initial length of first set.
 
+        let x = ebnf.productions[xh].1;
         // Compute a partial first(X) set for X
         for t in x.iter() { // For all rules with X as a LHS symbol
-            // All hash indexing of first is guaranteed to succeed because we always insert a
-            // new entry into the HashMap before we push into the queue.  So this shouldn't panic!
             let mut fs = t.iter();
             loop {
                 match fs.next().map( |&f| f) {
@@ -54,8 +50,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
                         // cannot contain epsilon.
                         break;
                     },
-                    Some(::Ref(p)) => { // X : P B ... with nonterminal symbol P
-                        let ph = p.as_ptr().to_uint().swap_bytes();
+                    Some(::Ref(ph)) => { // X : P B ... with nonterminal symbol P
                         if ph != xh {
                             // add to first(X) all terminal symbols other than epsilon
                             // that are currently in first(P).
@@ -67,40 +62,19 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
                             if !contains_epsilon { break }
                         }
                     },
-                    Some(::Opt(p)) | Some(::Rep(p)) => { // X : [P] B, P != X
-                        let ph = p.as_ptr().to_uint().swap_bytes();
+                    Some(::Opt(ph)) | Some(::Rep(ph)) => { // X : [P] B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
-                        let mut p_first = match first.entry(ph) {
-                            trie_map::Vacant(entry) => {
-                                // We know first(p) always contains epsilon, since it is an
-                                // opt/rep. Other than that, its terminals are identical to what
-                                // is in the expr, so we punt on them for now.
-                                let mut set = HashSet::new();
-                                set.insert(epsilon);
-                                entry.set(set);
-                                queue.push_back(p);
-                                continue
-                            },
-                            trie_map::Occupied(entry) => entry.get().clone()
-                        };
+                        first[ph].insert(epsilon);
+                        let mut p_first = first[ph].clone();
                         p_first.remove(&epsilon);
                         first[xh].extend(p_first.into_iter());
                         // Because first(p) contains epsilon, we always continue here.
                     },
-                    Some(::Group(p)) => { // X : (P) B, P != X
-                        let ph = p.as_ptr().to_uint().swap_bytes();
+                    Some(::Group(ph)) => { // X : (P) B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
-                        let mut p_first = match first.entry(ph) {
-                            trie_map::Vacant(entry) => {
-                                entry.set(HashSet::new());
-                                queue.push_back(p);
-                                // We know first(p) cannot contain epsilon yet.
-                                break;
-                            },
-                            trie_map::Occupied(entry) => entry.get().clone()
-                        };
+                        let mut p_first = first[ph].clone();
                         let contains_epsilon = p_first.remove(&epsilon);
                         first[xh].extend(p_first.into_iter());
                         // Repeat only if first(p) contains epsilon
@@ -112,7 +86,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> TrieMap<HashSet<&'a [Ascii]>> {
                 // If any terminals were added to first(X) in steps (3) through (6)
                 // that were not already members of first(X),
                 // or if first(X) is still empty, append X to the tail of the queue.
-                queue.push_back(x);
+                queue.push_back(xh);
                 // Otherwise,
                 // first(X) is complete
                 // (and nonterminal X is no longer in the queue);

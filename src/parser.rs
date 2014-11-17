@@ -437,19 +437,19 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         for t in pexp.iter() {
                             for pfactor in t.iter() {
                                 let mut factor = match *pfactor.get() {
-                                    Ident(i) => ::Ref(mem::transmute(match
+                                    Ident(i) => ::Ref(match
                                         search_productions.binary_search(|&(id, _)| id.cmp(i)) {
-                                        slice::Found(id) => productions[id].1,
+                                        slice::Found(id) => id,
                                         _ => {
                                             // Acknowledge the error and continue (can't exit).
                                             error = Err(::MissingProduction);
-                                            pexp
+                                            0
                                         }
-                                    })),
+                                    }),
                                     Lit(l) => ::Lit(l),
-                                    Opt(id) => ::Opt(mem::transmute(productions[len - id].1)),
-                                    Rep(id) => ::Rep(mem::transmute(productions[len - id].1)),
-                                    Group(id) => ::Group(mem::transmute(productions[len - id].1)),
+                                    Opt(id) => ::Opt(len - id),
+                                    Rep(id) => ::Rep(len - id),
+                                    Group(id) => ::Group(len - id),
                                 };
                                 *(pfactor.get() as *mut _) = factor;
                             }
