@@ -425,7 +425,14 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 let productions = unsafe {
                     let productions = mem::transmute::<_, &[(&[Ascii], ParseExpr)]>(productions);
                     let search_productions = productions[0 .. productions.len() - anon_factors ];
+                    let mut last_tag = EMPTY_ASCII[];
+                    let mut count = len - anon_factors;
                     productions_.map_in_place( |(tag, pexp)| {
+                        if count != 0 {
+                            if last_tag == tag { error = Err(::DuplicateProduction) }
+                            last_tag = tag;
+                            count -= 1;
+                        }
                         // Invariants: must read pfactors in order (never repeat a read), and must read
                         // them before they are written to (otherwise, we could accidentally ready a
                         // factor masquerading as a pfactor).  The reason this hack is necessary is
