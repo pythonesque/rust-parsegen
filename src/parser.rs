@@ -1,3 +1,5 @@
+use Error as E;
+use Factor as F;
 use scanner as s;
 use scanner::Tokens;
 
@@ -17,6 +19,9 @@ use std::raw::Repr;
 use std::slice;
 use std::slice::{BoxedSlicePrelude, raw};
 //use std::collections::PriorityQueue;
+
+use self::ExprType::*;
+use self::ParseFactor::*;
 
 /*pub struct FnvHasherDefault(pub FnvHasher);
 
@@ -194,11 +199,11 @@ macro_rules! parse_factor {
                 $term = GroupEnd;
                 $expr_lifetime
             },
-            s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
+            s::UnterminatedStringLiteral => return Err(E::UnterminatedStringLiteral),
             $(
                 $term_token => { $term_lifetime }
             )*
-            _ => return Err(::ExpectedFactorOrEnd),
+            _ => return Err(E::ExpectedFactorOrEnd),
         }
     }
 }}
@@ -352,10 +357,10 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         let (title, next) = match tokens.next() {
             //s::Lit => { (Some(tokens.tok), tokens.next()) },
             s::Lit(title) => { (Some(title), tokens.next()) },
-            s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
+            s::UnterminatedStringLiteral => return Err(E::UnterminatedStringLiteral),
             next => (None, next)
         };
-        if next != s::LBrace { return Err(::ExpectedLBrace) }
+        if next != s::LBrace { return Err(E::ExpectedLBrace) }
         //let mut productions: FnvHashMap<&[Ascii], ParseExpr> = HashMap::with_capacity_and_hasher(capacity, FnvHasher);
         //let mut productions: FnvHashMap<&[Ascii], ParseExpr> = HashMap::with_capacity_and_hasher(0, FnvHasher);
         //let mut productions: HashMap<&[Ascii], ParseExpr>;
@@ -373,7 +378,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 /*s::Ident => {
                     let id = tokens.tok;*/
                 s::Ident(id) => {
-                    if tokens.next() != s::Equals { return Err(::ExpectedEquals) }
+                    if tokens.next() != s::Equals { return Err(E::ExpectedEquals) }
                     //if !tokens.consume_equals() { return Err(::ExpectedEquals) }
                     /*match productions.entry(id) {
                         //btree::Vacant(entry) => { entry.set(parse_expression!(tokens, ctx, stack)); }
@@ -389,21 +394,21 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     //tx.send(unsafe { mem::transmute(Some((id, parse_expression!(tokens, ctx, stack)))) })
                 },
                 s::RBrace => break,
-                s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
-                _ => return Err(::ExpectedProduction),
+                s::UnterminatedStringLiteral => return Err(E::UnterminatedStringLiteral),
+                _ => return Err(E::ExpectedProduction),
             }
         }
         let (comment, next) = match tokens.next() {
             //s::Lit => (Some(tokens.tok), tokens.next()),
             s::Lit(comment) => (Some(comment), tokens.next()),
-            s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
+            s::UnterminatedStringLiteral => return Err(E::UnterminatedStringLiteral),
             next => (None, next),
         };
         match next {
-            s::UnterminatedStringLiteral => return Err(::UnterminatedStringLiteral),
+            s::UnterminatedStringLiteral => return Err(E::UnterminatedStringLiteral),
             s::EOF => {
                 terminals.reserve_exact(1);
-                terminals.push(EMPTY_ASCII); // Should always sort to element zero
+                terminals.push(&EMPTY_ASCII); // Should always sort to element zero
                 terminals.as_mut_slice().sort();
                 terminals.dedup();
                 //tx.send(None); // We're done!
@@ -441,7 +446,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     let mut count = len - anon_factors;
                     productions_.map_in_place( |(tag, pexp)| {
                         if count != 0 {
-                            if last_tag == tag { error = Err(::DuplicateProduction) }
+                            if last_tag == tag { error = Err(E::DuplicateProduction) }
                             last_tag = tag;
                             count -= 1;
                         }
@@ -456,22 +461,22 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         for t in pexp.iter() {
                             for pfactor in t.iter() {
                                 let mut factor = match *pfactor.get() {
-                                    Ident(i) => ::Ref(match
+                                    Ident(i) => F::Ref(match
                                         search_productions.binary_search(|&(id, _)| id.cmp(i)) {
                                         slice::Found(id) => id,
                                         _ => {
                                             // Acknowledge the error and continue (can't exit).
-                                            error = Err(::MissingProduction);
+                                            error = Err(E::MissingProduction);
                                             0
                                         }
                                     }),
-                                    Lit(l) => ::Lit(match terminals.binary_search_elem(&l) {
+                                    Lit(l) => F::Lit(match terminals.binary_search_elem(&l) {
                                         slice::Found(id) => id,
                                         _ => intrinsics::unreachable()
                                     }, 0),
-                                    Opt(id) => ::Opt(len - id),
-                                    Rep(id) => ::Rep(len - id),
-                                    Group(id) => ::Group(len - id),
+                                    Opt(id) => F::Opt(len - id),
+                                    Rep(id) => F::Rep(len - id),
+                                    Group(id) => F::Group(len - id),
                                 };
                                 *(pfactor.get() as *mut _) = factor;
                             }
@@ -487,7 +492,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     productions: productions
                 }))
             },
-            _ => Err(::ExpectedEOF),
+            _ => Err(E::ExpectedEOF),
         }
     }
 }

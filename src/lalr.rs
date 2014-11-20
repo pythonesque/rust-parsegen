@@ -1,3 +1,5 @@
+use Factor as F;
+
 use std::cell::RefCell;
 use std::collections::{hash_map, trie_map, BitvSet, HashMap, HashSet, RingBuf, VecMap};
 
@@ -46,15 +48,15 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
                         x_first.insert(EPSILON);
                         break
                     },
-                    Some(::Lit(EPSILON, _)) => continue, // Epsilon terminals are ignored
-                    Some(::Lit(t, _)) => { // X : t B ... with terminal symbol t as the leftmost RHS symbol
+                    Some(F::Lit(EPSILON, _)) => continue, // Epsilon terminals are ignored
+                    Some(F::Lit(t, _)) => { // X : t B ... with terminal symbol t as the leftmost RHS symbol
                         // 4. Add symbol t to first(X)
                         x_first.insert(t);
                         // Always break here, because we don't have a production so its first set
                         // cannot contain epsilon.
                         break;
                     },
-                    Some(::Ref(ph)) => { // X : P B ... with nonterminal symbol P
+                    Some(F::Ref(ph)) => { // X : P B ... with nonterminal symbol P
                         if ph != xh {
                             // add to first(X) all terminal symbols other than epsilon
                             // that are currently in first(P).
@@ -67,7 +69,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
                             if !x_contains_epsilon { x_first.remove(&EPSILON); }
                         }
                     },
-                    Some(::Opt(ph)) | Some(::Rep(ph)) => { // X : [P] B, P != X
+                    Some(F::Opt(ph)) | Some(F::Rep(ph)) => { // X : [P] B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
                         let mut p_first = first[ph].borrow_mut();
@@ -76,7 +78,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
                         if !x_contains_epsilon { x_first.remove(&EPSILON); }
                         // Because first(p) contains epsilon, we always continue here.
                     },
-                    Some(::Group(ph)) => { // X : (P) B, P != X
+                    Some(F::Group(ph)) => { // X : (P) B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
                         let p_first = first[ph].borrow();
@@ -106,16 +108,16 @@ pub fn first_for<'a>(term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first
     let mut set = BitvSet::with_capacity(ebnf.terminals.len());
     for &f in term.iter() {
         match f {
-            ::Lit(EPSILON, _) => continue,
-            ::Lit(t, _) => {
+            F::Lit(EPSILON, _) => continue,
+            F::Lit(t, _) => {
                 set.insert(t);
                 return set;
             },
-            ::Ref(s) | ::Group(s) => {
+            F::Ref(s) | F::Group(s) => {
                 set.union_with(&first[s]);
                 if !set.remove(&EPSILON) { return set }
             },
-            ::Opt(s) | ::Rep(s) => {
+            F::Opt(s) | F::Rep(s) => {
                 set.union_with(&first[s]);
                 set.remove(&EPSILON);
             }

@@ -1,10 +1,12 @@
-#![feature(associated_types,unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing)]
+#![feature(associated_types,unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing,globs)]
 
 extern crate arena;
 extern crate libc;
 //extern crate rustc;
 //extern crate sync;
 extern crate test;
+
+use self::Factor::*;
 
 //use rustc::util::nodemap::FnvHashMap;
 use std::fmt;
