@@ -73,7 +73,7 @@ mod fast_bit_set {
                     let index = elem >> 5;
                     let subindex = elem & 31;
                     let mask = 1u32 << subindex;
-                    let cell = self.storage.as_ptr().offset(index as int);
+                    let cell = cells.as_ptr().offset(index as int);
                     let cell_ = (*cell).get();
                     cell_ & mask != 0
             }))).collect::<Vec<_>>()
