@@ -1,4 +1,5 @@
 use Factor as F;
+use self::fast_bit_set::{FastBitSet, FastBitSetStorage};
 
 use std::cell::RefCell;
 use std::collections::{hash_map, trie_map, BitvSet, HashMap, HashSet, RingBuf, VecMap};
@@ -22,19 +23,162 @@ trait Rule<E, N> {}
 
 const EPSILON: uint = 0;
 
-pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
+mod fast_bit_set {
+    use std::cell::UnsafeCell;
+    use std::collections::{bitv, BitvSet};
+    use std::iter::AdditiveIterator;
+    use std::kinds::marker;
+    use std::fmt;
+    use std::mem;
+    use std::num::Int;
+    use std::raw::Repr;
+    use std::raw::Slice as RawSlice;
+    use std::u32;
+
+    pub struct FastBitSetStorage {
+        storage: Vec<UnsafeCell<u32>>,
+        bits: uint,
+        sets: uint,
+        cells: uint, // cached
+        marker: marker::NoSync,
+    }
+
+    impl FastBitSetStorage {
+        pub fn new(sets: uint, bits: uint) -> Option<FastBitSetStorage> {
+            if bits == 0 { return None } // Don't feel like handling this, sorry
+            let cells = (bits - 1) / u32::BITS + 1;
+            sets.checked_mul(cells).map( |size| FastBitSetStorage {
+                storage: Vec::from_fn(size, |_| UnsafeCell::new(0)),
+                bits: bits,
+                sets: sets,
+                cells: cells,
+                marker: marker::NoSync,
+            })
+        }
+
+        pub fn index<'a>(&self, index: uint) -> FastBitSet<'a> {
+            assert!(index < self.sets);
+            unsafe {
+                FastBitSet {
+                    storage: mem::transmute(RawSlice {
+                        data: self.storage.as_ptr().offset((index * self.cells) as int),
+                        len: self.cells,
+                    }),
+                    marker: marker::NoSync,
+                }
+            }
+        }
+
+        pub fn to_bitv_sets(&self) -> Vec<BitvSet> {
+            self.storage.chunks(self.cells).map( |cells|
+                BitvSet::from_bitv(bitv::from_fn(self.bits, |elem| unsafe {
+                    assert!(elem < self.bits);
+                    let index = elem >> 5;
+                    let subindex = elem & 31;
+                    let mask = 1u32 << subindex;
+                    let cell = (*cells.as_ptr().offset(index as int)).get();
+                    *cell & mask != 0
+            }))).collect::<Vec<_>>()
+        }
+    }
+
+    impl<'a> fmt::Show for FastBitSetStorage {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "{}", self.to_bitv_sets())
+        }
+    }
+
+    pub struct FastBitSet<'a> {
+        storage: &'a [UnsafeCell<u32>], // Might make this faster / save space by not including length
+        marker: marker::NoSync,
+    }
+
+    impl<'a> FastBitSet<'a> {
+        #[inline]
+        pub fn contains(&self, elem: uint) -> bool {
+            let index = elem >> 5;
+            let subindex = elem & 31;
+            let mask = 1u32 << subindex;
+            if index >= self.storage.len() { return false }
+            unsafe {
+                let cell = (*self.storage.as_ptr().offset(index as int)).get();
+                let success = *cell & mask != 0;
+                success
+            }
+        }
+
+        #[inline]
+        pub fn insert(&self, elem: uint) -> bool {
+            let index = elem >> 5;
+            let subindex = elem & 31;
+            let mask = 1u32 << subindex;
+            if index >= self.storage.len() { return false }
+            println!("{} {} {} {}", elem, index, subindex, mask);
+            unsafe {
+                let cell = (*self.storage.as_ptr().offset(index as int)).get();
+                let success = *cell & mask == 0;
+                *cell |= mask;
+                success
+            }
+        }
+
+        #[inline]
+        pub fn remove(&self, elem: uint) -> bool {
+            let index = elem >> 5;
+            let subindex = elem & 31;
+            let mask = 1u32 << subindex;
+            if index >= self.storage.len() { return false }
+            unsafe {
+                let cell = (*self.storage.as_ptr().offset(index as int)).get();
+                let success = *cell & mask != 0;
+                *cell &= !mask;
+                success
+            }
+        }
+
+        /// Note that the union will affect both self and other if they alias.
+        /// Fails if self and other have different lengths.
+        #[inline]
+        pub fn union_with(&self, other: &FastBitSet) {
+            // Might just assume this and make this unsafe
+            let RawSlice { data: mut ours, len } = self.storage.repr();
+            assert!(len == other.storage.len());
+            let mut theirs = other.storage.as_ptr();
+            unsafe {
+                let end = ours.offset(len as int);
+                while ours != end {
+                    let s = (*ours).get();
+                    let o = (*theirs).get();
+                    *s |= *o;
+                    ours = ours.offset(1);
+                    theirs = theirs.offset(1);
+                }
+            }
+        }
+
+        #[inline]
+        pub fn len(&self) -> uint {
+            self.storage.iter().map( |cell| unsafe { (*cell.get()).count_ones() } ).sum()
+        }
+    }
+}
+
+pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<FastBitSetStorage> {
     // http://david.tribble.com/text/lrk_parsing.html
 
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
     let mut queue = range(0, ebnf.productions.len()).collect::<RingBuf<_>>();
-    let mut first = Vec::from_elem(ebnf.productions.len(), RefCell::new(BitvSet::with_capacity(ebnf.terminals.len())));
+    let first = match FastBitSetStorage::new(ebnf.productions.len(), ebnf.terminals.len()) {
+        Some(first) => first,
+        None => return None
+    };
     // TODO: Error here if there were duplicate production entries, or something.
 
     loop {
         // 2. Pop nonterminal X from the head of the queue
         let xh = match queue.pop_front() { Some(xh) => xh, None => break };
-        let mut x_first = first[xh].borrow_mut();
-        let mut x_contains_epsilon = x_first.contains(&EPSILON);
+        let mut x_first = first.index(xh);
+        let mut x_contains_epsilon = x_first.contains(EPSILON);
         let old_len = x_first.len(); // Initial length of first set.
 
         let x = ebnf.productions[xh].1;
@@ -61,32 +205,32 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
                             // add to first(X) all terminal symbols other than epsilon
                             // that are currently in first(P).
                             // (first(P) may still be incomplete at this point.)
-                            let p_first = first[ph].borrow();
-                            let contains_epsilon = p_first.contains(&EPSILON);
-                            x_first.union_with(&*p_first);
+                            let p_first = first.index(ph);
+                            let contains_epsilon = p_first.contains(EPSILON);
+                            x_first.union_with(&p_first);
                             // Repeat only if first(p) contains epsilon
                             if !contains_epsilon { break }
-                            if !x_contains_epsilon { x_first.remove(&EPSILON); }
+                            if !x_contains_epsilon { x_first.remove(EPSILON); }
                         }
                     },
                     Some(F::Opt(ph)) | Some(F::Rep(ph)) => { // X : [P] B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
-                        let mut p_first = first[ph].borrow_mut();
+                        let p_first = first.index(ph);
                         p_first.insert(EPSILON);
-                        x_first.union_with(&*p_first);
-                        if !x_contains_epsilon { x_first.remove(&EPSILON); }
+                        x_first.union_with(&p_first);
+                        if !x_contains_epsilon { x_first.remove(EPSILON); }
                         // Because first(p) contains epsilon, we always continue here.
                     },
                     Some(F::Group(ph)) => { // X : (P) B, P != X
                         // add to first(X) all terminal symbols other than epsilon
                         // that are currently in first(P).
-                        let p_first = first[ph].borrow();
-                        let contains_epsilon = p_first.contains(&EPSILON);
-                        x_first.union_with(&*p_first);
+                        let p_first = first.index(ph);
+                        let contains_epsilon = p_first.contains(EPSILON);
+                        x_first.union_with(&p_first);
                         // Repeat only if first(p) contains epsilon
                         if !contains_epsilon { break }
-                        if !x_contains_epsilon { x_first.remove(&EPSILON); }
+                        if !x_contains_epsilon { x_first.remove(EPSILON); }
                     },
                 }
             }
@@ -101,30 +245,28 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Vec<BitvSet> {
             }
         }
     }
-    first.into_iter().map( |set| set.unwrap() ).collect()
+    Some(first)
 }
 
-pub fn first_for<'a>(term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first: &[BitvSet]) -> BitvSet {
-    let mut set = BitvSet::with_capacity(ebnf.terminals.len());
+pub fn first_for<'a>(set: &FastBitSet, term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first: &FastBitSetStorage) {
     for &f in term.iter() {
         match f {
             F::Lit(EPSILON, _) => continue,
             F::Lit(t, _) => {
                 set.insert(t);
-                return set;
+                return
             },
             F::Ref(s) | F::Group(s) => {
-                set.union_with(&first[s]);
-                if !set.remove(&EPSILON) { return set }
+                set.union_with(&first.index(s));
+                if !set.remove(EPSILON) { return }
             },
             F::Opt(s) | F::Rep(s) => {
-                set.union_with(&first[s]);
-                set.remove(&EPSILON);
+                set.union_with(&first.index(s));
+                set.remove(EPSILON);
             }
         }
     }
     set.insert(lookahead);
-    return set;
 }
 
 enum Lookahead<'a> {
@@ -277,6 +419,7 @@ impl<R> Table<VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>>
 #[cfg(test)]
 mod tests {
     use lalr;
+    use lalr::fast_bit_set::FastBitSetStorage;
     use parser::{Parser, ParserContext};
     use std::hash::sip::{SipHasher, SipState};
     use test::Bencher;
@@ -300,7 +443,7 @@ mod tests {
                      .to_ascii();
         let ebnf = parser.parse(&ctx, string).unwrap();
         println!("{}", ebnf);
-        let first = lalr::first(&ebnf);
+        let first = lalr::first(&ebnf).unwrap();
         println!("{}", first);
     }
 
@@ -315,10 +458,12 @@ mod tests {
                      .to_ascii();
         let ebnf = parser.parse(&ctx, string).unwrap();
         println!("{}", ebnf);
-        let firsts = lalr::first(&ebnf);
+        let firsts = lalr::first(&ebnf).unwrap();
         println!("{}", firsts);
         let end = ebnf.terminals.len();
-        let first = lalr::first_for(ebnf.productions[0].1[1][1 .. ], end, &ebnf, firsts[]);
+        let mut sets = FastBitSetStorage::new(1, ebnf.terminals.len()).unwrap();
+        let mut set = sets.index(0);
+        let first = lalr::first_for(&set, ebnf.productions[0].1[1][1 .. ], end, &ebnf, &firsts);
         // {1, 3, 4}
         println!("{}", first);
     }
@@ -338,7 +483,7 @@ mod tests {
             //let ref ctx = ParserContext::new(32);
             //for _ in range(0, 10i8) {
                 let ebnf = parser.parse(ctx, string).unwrap();
-                let first = lalr::first(&ebnf);
+                let first = lalr::first(&ebnf).unwrap();
             //}
         });
     }

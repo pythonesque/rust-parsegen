@@ -138,7 +138,7 @@ impl<'a,T> StackVec<'a, T> where T: 'a {
     #[inline(always)]
     fn push<'b>(&'b mut self, value: T, arena: &'a TypedArena<UnsafeCell<Vec<T>>>) {
         const STACK_VEC_LAST: uint = STACK_VEC_MAX - 1;
-        #[allow(dead_code)] const STACK_VEC_PENULTIMATE: uint = STACK_VEC_LAST - 1;
+        const STACK_VEC_PENULTIMATE: uint = STACK_VEC_LAST - 1;
         match self.len {
             l @ 0 ... STACK_VEC_PENULTIMATE => {
                 self.stk[l] = value;
