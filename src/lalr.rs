@@ -24,7 +24,7 @@ trait Rule<E, N> {}
 const EPSILON: uint = 0;
 
 mod fast_bit_set {
-    use std::cell::UnsafeCell;
+    use std::cell::Cell;
     use std::collections::{bitv, BitvSet};
     use std::iter::AdditiveIterator;
     use std::kinds::marker;
@@ -36,11 +36,10 @@ mod fast_bit_set {
     use std::u32;
 
     pub struct FastBitSetStorage {
-        storage: Vec<UnsafeCell<u32>>,
+        storage: Vec<Cell<u32>>,
         bits: uint,
         sets: uint,
         cells: uint, // cached
-        marker: marker::NoSync,
     }
 
     impl FastBitSetStorage {
@@ -48,11 +47,10 @@ mod fast_bit_set {
             if bits == 0 { return None } // Don't feel like handling this, sorry
             let cells = (bits - 1) / u32::BITS + 1;
             sets.checked_mul(cells).map( |size| FastBitSetStorage {
-                storage: Vec::from_fn(size, |_| UnsafeCell::new(0)),
+                storage: Vec::from_elem(size, Cell::new(0)),
                 bits: bits,
                 sets: sets,
                 cells: cells,
-                marker: marker::NoSync,
             })
         }
 
@@ -64,7 +62,6 @@ mod fast_bit_set {
                         data: self.storage.as_ptr().offset((index * self.cells) as int),
                         len: self.cells,
                     }),
-                    marker: marker::NoSync,
                 }
             }
         }
@@ -76,8 +73,9 @@ mod fast_bit_set {
                     let index = elem >> 5;
                     let subindex = elem & 31;
                     let mask = 1u32 << subindex;
-                    let cell = (*cells.as_ptr().offset(index as int)).get();
-                    *cell & mask != 0
+                    let cell = self.storage.as_ptr().offset(index as int);
+                    let cell_ = (*cell).get();
+                    cell_ & mask != 0
             }))).collect::<Vec<_>>()
         }
     }
@@ -89,8 +87,7 @@ mod fast_bit_set {
     }
 
     pub struct FastBitSet<'a> {
-        storage: &'a [UnsafeCell<u32>], // Might make this faster / save space by not including length
-        marker: marker::NoSync,
+        storage: &'a [Cell<u32>], // Might make this faster / save space by not including length
     }
 
     impl<'a> FastBitSet<'a> {
@@ -101,8 +98,9 @@ mod fast_bit_set {
             let mask = 1u32 << subindex;
             if index >= self.storage.len() { return false }
             unsafe {
-                let cell = (*self.storage.as_ptr().offset(index as int)).get();
-                let success = *cell & mask != 0;
+                let cell = self.storage.as_ptr().offset(index as int);
+                let cell_ = (*cell).get();
+                let success = cell_ & mask != 0;
                 success
             }
         }
@@ -114,9 +112,10 @@ mod fast_bit_set {
             let mask = 1u32 << subindex;
             if index >= self.storage.len() { return false }
             unsafe {
-                let cell = (*self.storage.as_ptr().offset(index as int)).get();
-                let success = *cell & mask == 0;
-                *cell |= mask;
+                let cell = self.storage.as_ptr().offset(index as int);
+                let cell_ = (*cell).get();
+                let success = cell_ & mask == 0;
+                (*cell).set(cell_ | mask);
                 success
             }
         }
@@ -128,9 +127,10 @@ mod fast_bit_set {
             let mask = 1u32 << subindex;
             if index >= self.storage.len() { return false }
             unsafe {
-                let cell = (*self.storage.as_ptr().offset(index as int)).get();
-                let success = *cell & mask != 0;
-                *cell &= !mask;
+                let cell = self.storage.as_ptr().offset(index as int);
+                let cell_ = (*cell).get();
+                let success = cell_ & mask != 0;
+                (*cell).set(cell_ & !mask);
                 success
             }
         }
@@ -148,7 +148,7 @@ mod fast_bit_set {
                 while ours != end {
                     let s = (*ours).get();
                     let o = (*theirs).get();
-                    *s |= *o;
+                    (*ours).set(s | o);
                     ours = ours.offset(1);
                     theirs = theirs.offset(1);
                 }
@@ -157,7 +157,7 @@ mod fast_bit_set {
 
         #[inline]
         pub fn len(&self) -> uint {
-            self.storage.iter().map( |cell| unsafe { (*cell.get()).count_ones() } ).sum()
+            self.storage.iter().map( |cell| cell.get().count_ones() ).sum()
         }
     }
 }
