@@ -113,7 +113,6 @@ mod fast_bit_set {
             let subindex = elem & 31;
             let mask = 1u32 << subindex;
             if index >= self.storage.len() { return false }
-            println!("{} {} {} {}", elem, index, subindex, mask);
             unsafe {
                 let cell = (*self.storage.as_ptr().offset(index as int)).get();
                 let success = *cell & mask == 0;
