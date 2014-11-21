@@ -17,6 +17,7 @@ pub use parser::{Parser, ParserContext};
 mod lalr;
 mod scanner;
 mod parser;
+pub mod util;
 
 #[deriving(PartialEq)]
 // The actual Exp structure.
