@@ -37,9 +37,9 @@ mod fast_bit_set {
 
     pub struct FastBitSetStorage {
         storage: Vec<Cell<u32>>,
-        bits: uint,
         sets: uint,
         cells: uint, // cached
+        bits: uint,
     }
 
     impl FastBitSetStorage {
@@ -136,16 +136,16 @@ mod fast_bit_set {
         }
 
         /// Note that the union will affect both self and other if they alias.
-        /// Fails if self and other have different lengths.
+        /// Fails if self has a lower length than other.
         #[inline]
         pub fn union_with(&self, other: &FastBitSet) {
             // Might just assume this and make this unsafe
             let RawSlice { data: mut ours, len } = self.storage.repr();
-            assert!(len == other.storage.len());
+            assert!(len >= other.storage.len());
             let mut theirs = other.storage.as_ptr();
             unsafe {
-                let end = ours.offset(len as int);
-                while ours != end {
+                let end = theirs.offset(len as int);
+                while theirs != end {
                     let s = (*ours).get();
                     let o = (*theirs).get();
                     (*ours).set(s | o);
@@ -335,77 +335,101 @@ enum Lookahead<'a> {
 //+ end.
 //pub fn generate_
 
-/*pub fn closure<'a>(kernel: Item<'a>, ebnf: &::Ebnf<'a>, first: &[HashSet<&'a Ascii>]) {
-    let mut set = HashSet::new();
-    let mut queue = RingBuf::new();
-    queue.push_back(kernel);
-    loop {
-        let item = match queue.pop_ront() { Some(i) => i, None => break };
-        if set.insert(item) {
-            let mut new_term = item.term.split_at(1);
-            match item[0] {
-                Lit(_) => continue,
-                Ref(i) | Group(i) => {
-                    for &lookahead in first[i].iter() {
-                        queue.push_back(Item { lhs: i, term: ebnf.productions[i].1
-                    }
+mod dirty_free_list {
+    use arena::TypedArena;
+    use std::cell::RefCell;
+    use std::mem;
+
+    /// A "dirty" free list that doesn't zero elements on destruction.
+    pub struct FreeList<'a, T: 'a, F: 'a> where F: Fn() -> T {
+        arena: TypedArena<Node<'a, T>>,
+        first: RefCell<Option<&'a mut Node<'a, T>>>,
+        alloc: F,
+    }
+
+    pub static FREE_LIST_DEFAULT_CAPACITY: uint = 8;
+
+    impl<'a, T, F> FreeList<'a, T, F>  where F: Fn() -> T {
+        pub fn new(alloc: F) -> FreeList<'a, T, F> {
+            FreeList::with_capacity(FREE_LIST_DEFAULT_CAPACITY, alloc)
+        }
+
+        pub fn with_capacity(capacity: uint, alloc: F) -> FreeList<'a, T, F> {
+            FreeList {
+                arena: TypedArena::with_capacity(capacity),
+                first: RefCell::new(None),
+                alloc: alloc,
+            }
+        }
+
+        fn alloc(&'a self) -> &'a mut Node<'a, T> {
+            let mut first = self.first.borrow_mut();
+            let first = first.deref_mut();
+            let node = match first.take() {
+                Some(first) => first,
+                None => self.arena.alloc(Node { data: (self.alloc)(), next: None })
+            };
+            *first = node.next.take();
+            node
+        }
+
+        /*fn iter<'b>(&'b self) -> FreeListItems<'a, 'b, T> {
+            FreeListItems {
+                node: Option<&mut Node<'a, T>>,
+            }
+        }*/
+    }
+
+    struct Node<'a, T: 'a> {
+        data: T,
+        next: Option<&'a mut Node<'a, T>>,
+    }
+
+    pub struct Hole<'a, T: 'a, F: 'a> where F: Fn() -> T {
+        // Should always be Some, we do this to perform the Option dance.  May remove the Option
+        // later if it turns out to be too slow.
+        inner: Option<&'a mut Node<'a, T>>,
+        // Not strictly necessary but ensures we avoid leaks and add this back to the old freelist
+        // when we're done with it.  If this turns out to be too wasteful we can do the drops
+        // explicitly and eliminate this member.
+        free_list: &'a FreeList<'a, T, F>,
+    }
+
+    impl<'a, T, F> Hole<'a, T, F> where F: Fn() -> T {
+        #[inline]
+        pub fn new(free_list: &'a FreeList<'a, T, F>) -> Hole<'a, T, F> {
+            Hole { inner: None, free_list: free_list }
+        }
+
+        /// This should not be able to panic
+        #[inline]
+        pub fn unwrap<'b>(&'b mut self) -> &'b mut T {
+            match self.inner {
+                Some(ref mut inner) => &mut inner.data,
+                None => {
+                    self.inner = Some(self.free_list.alloc());
+                    &mut self.inner.as_mut().unwrap().data
                 }
             }
-            for &lookahead in first[item.lhs].iter() {
-                queue.push_back(Item { lhs: item.term});
-            }
         }
-    }
-}*/
 
-/*impl<T, R, Actions, Gotos, State, Terminal, NonTerminal> Table<T>
-    where T: Map<State, Row<Actions, Gotos>>,
-          Actions: Map<Terminal, Action<State, R>>,
-          Gotos: Map<NonTerminal, State>,
-          R: Rule<Terminal, NonTerminal>,
-{
-
-}*/
-/*fn make_items(ebnf: &Ebnf<'a>) {
-
-    let mut items = Vec::new();
-    for &(_, e) in ebnf.productions.iter() { // rule lhs
-        for t in e.iter() { // rule rhs
-            for f in t.iter() { // rule factor
-                items.push(f);
-            }
+        #[inline]
+        pub fn free<'b>(&'b mut self) {
+            debug_assert!(self.inner.as_ref().unwrap().next.is_none()); // Doesn't cause memory unsafety but could leak 
+            let mut first = self.free_list.first.borrow_mut();
+            self.inner.as_mut().unwrap().next = first.take();
+            *first = self.inner.take();
         }
     }
 
-    let mut item_sets = Vec::new();
-
-    let rules = HashMap::new();
-    let mut items = Vec::new();
-    for &(_, e) in ebnf.productions.iter() {
-        for t in e.iter() {
-            for f in t.iter() {
-                items.push(f);
-            }
+    #[unsafe_destructor]
+    impl<'a, T, F> Drop for Hole<'a, T, F> where F: Fn() -> T {
+        #[inline]
+        fn drop<'b>(&'b mut self) {
+            self.free();
         }
     }
-}*/
-
-/*fn closure(ebnf: &Ebnf<'a>) {
-    let ref i0 = ebnf[0];
-    let closure_items = HashSet::new();
-    //let mut queue = ebnf.productions.iter().map( |&(_, e)| e ).collect::<RingBuf<_>>();
-    let mut stack = Vec::new();
-    stack.push(i0);
-    loop {
-        match stack.pop() {
-            Some(e) => {
-                if closure_items.insert(e) {
-                }
-            },
-            None => break
-        }
-    }
-}*/
+}
 
 impl<R> Table<VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>>
     where R: Rule<uint, uint>,
