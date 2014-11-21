@@ -3,7 +3,7 @@ use Factor as F;
 use std::cell::RefCell;
 use std::collections::{hash_map, trie_map, BitvSet, HashMap, HashSet, RingBuf, VecMap};
 
-use util::fast_bit_set::{FastBitSet, FastBitSetStorage};
+use util::fast_bit_set::{BitSet, BitSetStorage};
 
 struct Table<T> {
     table: T,
@@ -25,12 +25,12 @@ trait Rule<E, N> {}
 const EPSILON: uint = 0;
 
 
-pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<FastBitSetStorage> {
+pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<BitSetStorage<u32>> {
     // http://david.tribble.com/text/lrk_parsing.html
 
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
     let mut queue = range(0, ebnf.productions.len()).collect::<RingBuf<_>>();
-    let first = match FastBitSetStorage::new(ebnf.productions.len(), ebnf.terminals.len()) {
+    let first = match BitSetStorage::new(ebnf.productions.len(), ebnf.terminals.len(), 0) {
         Some(first) => first,
         None => return None
     };
@@ -110,7 +110,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<FastBitSetStorage> {
     Some(first)
 }
 
-pub fn first_for<'a>(set: &FastBitSet, term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first: &FastBitSetStorage) {
+pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first: &BitSetStorage<u32>) {
     for &f in term.iter() {
         match f {
             F::Lit(EPSILON, _) => continue,
@@ -209,7 +209,7 @@ impl<R> Table<VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>>
 #[cfg(test)]
 mod tests {
     use lalr;
-    use util::fast_bit_set::FastBitSetStorage;
+    use util::fast_bit_set::BitSetStorage;
     use parser::{Parser, ParserContext};
     use std::hash::sip::{SipHasher, SipState};
     use test::Bencher;
@@ -251,7 +251,7 @@ mod tests {
         let firsts = lalr::first(&ebnf).unwrap();
         println!("{}", firsts);
         let end = ebnf.terminals.len();
-        let mut sets = FastBitSetStorage::new(1, ebnf.terminals.len()).unwrap();
+        let mut sets = BitSetStorage::new(1, ebnf.terminals.len(), 0).unwrap();
         let mut set = sets.index(0);
         let first = lalr::first_for(&set, ebnf.productions[0].1[1][1 .. ], end, &ebnf, &firsts);
         // {1, 3, 4}

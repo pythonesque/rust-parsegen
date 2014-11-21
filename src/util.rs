@@ -1,38 +1,86 @@
 pub mod fast_bit_set {
     use std::cell::Cell;
     use std::collections::{bitv, BitvSet};
-    use std::iter::AdditiveIterator;
+    use std::iter::{AdditiveIterator, range_step, Unfold};
     use std::kinds::marker;
     use std::fmt;
     use std::mem;
-    use std::num::Int;
+    use std::num::{Int, UnsignedInt};
     use std::raw::Repr;
     use std::raw::Slice as RawSlice;
-    use std::u32;
+    use std::{u8, u32, uint};
 
-    pub struct FastBitSetStorage {
-        storage: Vec<Cell<u32>>,
-        sets: uint,
-        cells: uint, // cached
-        bits: uint,
+    // `bit_exp`: an exponent such that `2^bit_exp` == `bits_per_elem`.
+    // `bits_per_elem` must divide `T`'s size in bits by a power of 2.
+    // Also, `T`'s preferred alignment must divide `T`'s size by a power of 2
+    // The above requirements makes things nice and regular so we don't have to worry about
+    // edge cases (hopefully).
+    macro_rules! fast_bit_set(($storage:ident, $set:ident, $bit_exp:expr) => {
+
+    // Can assume:
+    //  sets * cells does not overflow
+    //  mem::size_of::<T> << 3 does not overflow
+    //  mem::size_of::<T> = 2^(k+bit_exp-3) for some k >= 0
+    //  mem::size_of::<T> = 2^k * mem::align_of::<T> for some k >= 0
+    //  mem::align_of::<T> = 2^k for some k >= 0
+    //  set_size != 0
+    //  1u << (bit_exp) does not overflow
+    pub struct $storage<T> {
+        storage: Vec<Cell<T>>, // backing storage for sets
+        sets: uint, // total number of sets
+        cells: uint, // cached: total number of cells per set
+        set_size: uint, // cached: total elements per set
     }
 
-    impl FastBitSetStorage {
-        pub fn new(sets: uint, bits: uint) -> Option<FastBitSetStorage> {
-            if bits == 0 { return None } // Don't feel like handling this, sorry
-            let cells = (bits - 1) / u32::BITS + 1;
-            sets.checked_mul(cells).map( |size| FastBitSetStorage {
-                storage: Vec::from_elem(size, Cell::new(0)),
-                bits: bits,
+    impl<T> $storage<T>
+    where T: BitAnd<T, T> + BitOr<T, T> + Copy + PartialEq + Not<T> + Shl<uint, T> + Shr<uint, T> {
+        /// `sets`: total number of sets to allocate storage for
+        ///
+        /// `set_size`: maximum number of elements per set (nonresizable)
+        ///
+        ///
+        /// `initial`: the initial element (`std::mem::uninitialized()` is acceptable)
+        pub fn new(sets: uint,
+                   set_size: uint, elem: T) -> Option<$storage<T>> {
+            // This whole function is checked really carefully to ensure that we get sane / defined
+            // results in subsequent function calls.
+            let cell_size = mem::size_of::<T>();
+            let cell_align = mem::align_of::<T>();
+            let cell_bits = match cell_size.checked_mul(u8::BITS) {
+                Some(0) | None => return None, // Don't feel like dealing with it.
+                Some(bits) => bits,
+            };
+            // Is there a saturating bit shift?
+            if $bit_exp >= uint::BITS || !cell_bits.is_power_of_two() ||
+               !cell_align.is_power_of_two() || set_size == 0 {
+                // Don't feel like handling these, sorry
+                return None
+            }
+            let bits_per_elem = 1 << $bit_exp;
+            // Make sure cell size is bits_per_elem * 2^k where k >= 0
+            let size_mask = bits_per_elem - 1;
+            let align_mask = cell_align - 1;
+            if cell_bits & size_mask != 0 || cell_size & align_mask != 0 {
+                // Maybe could relax the restriction that bits_per_elem is 2^k * 2^bit_exp, but no
+                // reason to right now.
+                return None
+            }
+            let cells = (match set_size.checked_mul(bits_per_elem) {
+                Some(bits) => bits,
+                None => return None
+            } - 1) / cell_bits + 1;
+            sets.checked_mul(cells).map( |size| $storage {
+                storage: Vec::from_elem(size, Cell::new(elem)),
+                set_size: set_size,
                 sets: sets,
                 cells: cells,
             })
         }
 
-        pub fn index<'a>(&self, index: uint) -> FastBitSet<'a> {
+        pub fn index<'a>(&self, index: uint) -> $set<'a, T> {
             assert!(index < self.sets);
             unsafe {
-                FastBitSet {
+                $set {
                     storage: mem::transmute(RawSlice {
                         data: self.storage.as_ptr().offset((index * self.cells) as int),
                         len: self.cells,
@@ -42,99 +90,159 @@ pub mod fast_bit_set {
         }
 
         pub fn to_bitv_sets(&self) -> Vec<BitvSet> {
-            self.storage.chunks(self.cells).map( |cells|
-                BitvSet::from_bitv(bitv::from_fn(self.bits, |elem| unsafe {
-                    assert!(elem < self.bits);
-                    let index = elem >> 5;
-                    let subindex = elem & 31;
-                    let mask = 1u32 << subindex;
-                    let cell = cells.as_ptr().offset(index as int);
-                    let cell_ = (*cell).get();
-                    cell_ & mask != 0
-            }))).collect::<Vec<_>>()
+            let cell_size = mem::size_of::<T>();
+            let cell_bits = cell_size << 3;
+            let zero = unsafe { mem::zeroed::<T>() };
+            let cell_exp = cell_size.trailing_zeros();
+            let index_exp = cell_exp + 3 - $bit_exp;
+            const ELEM_EXP: uint = 1 << $bit_exp;
+            self.storage.chunks(self.cells).map( |cells| {
+                let mut set = BitvSet::with_capacity(self.cells);
+                for (index, &cell) in cells.iter().enumerate() {
+                    // Hopefully this will get evaluated at compile time.  This is intended to
+                    // avoid undefined behavior from overlong shifts without causing runtime
+                    // overhead and is the primary reason we are using a macro at all.
+                    if cell_bits == ELEM_EXP {
+                        if cell.get() != zero {
+                            set.insert(index);
+                        }
+                    } else {
+                        let elem_mask = !zero >> (cell_bits - ELEM_EXP);
+                        let mut cell = cell.get();
+                        for index in range(index << index_exp, (index + 1) << index_exp) {
+                            let flag = cell & elem_mask;
+                            if flag != zero {
+                                set.insert(index);
+                            }
+                            cell = cell >> ELEM_EXP;
+                        }
+                    }
+                }
+                set
+            }).collect()
         }
     }
 
-    impl<'a> fmt::Show for FastBitSetStorage {
+    impl<'a, T> fmt::Show for $storage<T>
+    where T: BitAnd<T, T> + BitOr<T, T> + Copy + PartialEq + Not<T> + Shl<uint, T> + Shr<uint, T> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "{}", self.to_bitv_sets())
         }
     }
 
-    pub struct FastBitSet<'a> {
-        storage: &'a [Cell<u32>], // Might make this faster / save space by not including length
+    pub struct $set<'a, T: 'a> {
+        storage: &'a [Cell<T>], // Might make this faster / save space by not including length
     }
 
-    impl<'a> FastBitSet<'a> {
-        #[inline]
-        pub fn contains(&self, elem: uint) -> bool {
-            let index = elem >> 5;
-            let subindex = elem & 31;
-            let mask = 1u32 << subindex;
+    impl<'a, T> $set<'a, T>
+    where T: BitAnd<T, T> + BitOr<T, T> + Copy + PartialEq + Not<T> + Shl<uint, T> + Shr<uint, T> + fmt::Show + Int {
+        #[inline(always)]
+        fn action<F>(&self, elem: uint, action: F) -> bool where F: FnOnce(*const Cell<T>, T) -> bool {
+            let cell_size = mem::size_of::<T>();
+            let cell_bits = cell_size << 3;
+            let zero = unsafe { mem::zeroed::<T>() };
+            let one = !zero >> (cell_bits - 1);
+            let cell_exp = cell_size.trailing_zeros();
+            let index_exp = cell_exp + 3 - $bit_exp;
+            const ELEM_EXP: uint = 1 << $bit_exp;
+            let index = elem >> index_exp;
             if index >= self.storage.len() { return false }
+            let mask = if cell_bits == ELEM_EXP {
+                !zero
+            } else {
+                let index_mask = (1 << index_exp) - 1;
+                let subindex = elem & index_mask;
+                let elem_mask = !zero >> (cell_bits - ELEM_EXP);
+                elem_mask << (subindex >> $bit_exp)
+            };
             unsafe {
                 let cell = self.storage.as_ptr().offset(index as int);
-                let cell_ = (*cell).get();
-                let success = cell_ & mask != 0;
-                success
+                action(cell, mask)
             }
+        }
+
+        #[inline]
+        pub fn contains(&self, elem: uint) -> bool {
+            self.action(elem, |: cell: *const Cell<T>, mask| unsafe {
+                let cell_ = (*cell).get();
+                let success = cell_ & mask != mem::zeroed();
+                success
+            })
         }
 
         #[inline]
         pub fn insert(&self, elem: uint) -> bool {
-            let index = elem >> 5;
-            let subindex = elem & 31;
-            let mask = 1u32 << subindex;
-            if index >= self.storage.len() { return false }
-            unsafe {
-                let cell = self.storage.as_ptr().offset(index as int);
+            self.action(elem, |: cell: *const Cell<T>, mask| unsafe {
                 let cell_ = (*cell).get();
-                let success = cell_ & mask == 0;
+                let success = cell_ & mask == mem::zeroed();
                 (*cell).set(cell_ | mask);
                 success
-            }
+            })
         }
 
         #[inline]
         pub fn remove(&self, elem: uint) -> bool {
-            let index = elem >> 5;
-            let subindex = elem & 31;
-            let mask = 1u32 << subindex;
-            if index >= self.storage.len() { return false }
-            unsafe {
-                let cell = self.storage.as_ptr().offset(index as int);
+            self.action(elem, |: cell: *const Cell<T>, mask| unsafe {
                 let cell_ = (*cell).get();
-                let success = cell_ & mask != 0;
+                let success = cell_ & mask != mem::zeroed();
                 (*cell).set(cell_ & !mask);
                 success
-            }
+            })
         }
 
         /// Note that the union will affect both self and other if they alias.
         /// Fails if self has a lower length than other.
         #[inline]
-        pub fn union_with(&self, other: &FastBitSet) {
+        pub fn union_with(&self, other: &$set<T>) {
             // Might just assume this and make this unsafe
-            let RawSlice { data: mut ours, len } = self.storage.repr();
-            assert!(len >= other.storage.len());
-            let mut theirs = other.storage.as_ptr();
+            let RawSlice { data: mut theirs, len } = other.storage.repr();
+            assert!(self.storage.len() >= len);
+            let mut ours = self.storage.as_ptr();
             unsafe {
                 let end = theirs.offset(len as int);
                 while theirs != end {
-                    let s = (*ours).get();
-                    let o = (*theirs).get();
-                    (*ours).set(s | o);
+                    let o = (*ours).get();
+                    let t = (*theirs).get();
+                    (*ours).set(o | t);
                     ours = ours.offset(1);
                     theirs = theirs.offset(1);
                 }
-            }
+            };
         }
 
         #[inline]
         pub fn len(&self) -> uint {
-            self.storage.iter().map( |cell| cell.get().count_ones() ).sum()
+            if $bit_exp == 0u {
+                self.storage.iter().map( |cell| cell.get().count_ones() ).sum()
+            } else {
+                let cell_size = mem::size_of::<T>();
+                let cell_bits = cell_size << 3;
+                let zero = unsafe { mem::zeroed::<T>() };
+                let cell_exp = cell_size.trailing_zeros();
+                let index_exp = cell_exp + 3 - $bit_exp;
+                const ELEM_EXP: uint = 1 << $bit_exp;
+                self.storage.iter().map( |cell| {
+                    if cell_bits == ELEM_EXP {
+                        if cell.get() != zero { 1 } else { 0 }
+                    } else {
+                        let elem_mask = !zero >> (cell_bits - ELEM_EXP);
+                        let mut cell = cell.get();
+                        let mut count = 0;
+                        for _ in range(0u, 1 << index_exp) {
+                            let flag = cell & elem_mask;
+                            if flag != zero { count += 1 }
+                            cell = cell >> ELEM_EXP;
+                        }
+                        count
+                    }
+                }).sum()
+            }
         }
     }
+    })
+
+    fast_bit_set!(BitSetStorage, BitSet, 0)
+    fast_bit_set!(ByteSetStorage, ByteSet, 3)
 }
 
 
