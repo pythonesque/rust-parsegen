@@ -10,7 +10,6 @@ use self::Factor::*;
 
 //use rustc::util::nodemap::FnvHashMap;
 use std::fmt;
-use std::raw::Repr;
 
 pub use parser::{Parser, ParserContext};
 

@@ -19,7 +19,7 @@ fn parse<I, O>(parser: &mut Parser, mut input: I,  output: &mut O)
 }
 
 fn print_usage(program: &str, _opts: &[OptGroup]) {
-    let mut output = io::stdout();
+    let ref mut output = io::stdout();
     (writeln!(output, "Usage: {} [options]", program)).unwrap();
     (writeln!(output, "-h --help\tUsage")).unwrap();
 }

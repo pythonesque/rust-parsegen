@@ -1,14 +1,13 @@
 pub mod fast_bit_set {
     use std::cell::Cell;
-    use std::collections::{bitv, BitvSet};
-    use std::iter::{AdditiveIterator, range_step, Unfold};
-    use std::kinds::marker;
+    use std::collections::BitvSet;
+    use std::iter::AdditiveIterator;
     use std::fmt;
     use std::mem;
     use std::num::{Int, UnsignedInt};
     use std::raw::Repr;
     use std::raw::Slice as RawSlice;
-    use std::{u8, u32, uint};
+    use std::{u8, uint};
 
     // `bit_exp`: an exponent such that `2^bit_exp` == `bits_per_elem`.
     // `bits_per_elem` must divide `T`'s size in bits by a power of 2.
@@ -141,7 +140,6 @@ pub mod fast_bit_set {
             let cell_size = mem::size_of::<T>();
             let cell_bits = cell_size << 3;
             let zero = unsafe { mem::zeroed::<T>() };
-            let one = !zero >> (cell_bits - 1);
             let cell_exp = cell_size.trailing_zeros();
             let index_exp = cell_exp + 3 - $bit_exp;
             const ELEM_EXP: uint = 1 << $bit_exp;
@@ -153,7 +151,7 @@ pub mod fast_bit_set {
                 let index_mask = (1 << index_exp) - 1;
                 let subindex = elem & index_mask;
                 let elem_mask = !zero >> (cell_bits - ELEM_EXP);
-                elem_mask << (subindex >> $bit_exp)
+                elem_mask << (subindex << $bit_exp)
             };
             unsafe {
                 let cell = self.storage.as_ptr().offset(index as int);
@@ -228,7 +226,7 @@ pub mod fast_bit_set {
                         let elem_mask = !zero >> (cell_bits - ELEM_EXP);
                         let mut cell = cell.get();
                         let mut count = 0;
-                        for _ in range(0u, 1 << index_exp) {
+                        while cell != zero {
                             let flag = cell & elem_mask;
                             if flag != zero { count += 1 }
                             cell = cell >> ELEM_EXP;
@@ -249,7 +247,6 @@ pub mod fast_bit_set {
 mod dirty_free_list {
     use arena::TypedArena;
     use std::cell::RefCell;
-    use std::mem;
 
     /// A "dirty" free list that doesn't zero elements on destruction.
     pub struct FreeList<'a, T: 'a, F: 'a> where F: Fn() -> T {
@@ -326,7 +323,7 @@ mod dirty_free_list {
 
         #[inline]
         pub fn free<'b>(&'b mut self) {
-            debug_assert!(self.inner.as_ref().unwrap().next.is_none()); // Doesn't cause memory unsafety but could leak 
+            debug_assert!(self.inner.as_ref().unwrap().next.is_none()); // Doesn't cause memory unsafety but could leak
             let mut first = self.free_list.first.borrow_mut();
             self.inner.as_mut().unwrap().next = first.take();
             *first = self.inner.take();

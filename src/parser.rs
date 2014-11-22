@@ -17,7 +17,7 @@ use std::mem;
 use std::ptr;
 use std::raw::Repr;
 use std::slice;
-use std::slice::{BoxedSlicePrelude, raw};
+use std::slice::{BoxedSlicePrelude};
 //use std::collections::PriorityQueue;
 
 use self::ExprType::*;
@@ -460,7 +460,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                         // Idents.
                         for t in pexp.iter() {
                             for pfactor in t.iter() {
-                                let mut factor = match *pfactor.get() {
+                                let factor = match *pfactor.get() {
                                     Ident(i) => F::Ref(match
                                         search_productions.binary_search(|&(id, _)| id.cmp(i)) {
                                         slice::Found(id) => id,

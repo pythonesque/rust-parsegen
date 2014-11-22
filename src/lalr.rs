@@ -1,11 +1,10 @@
 use Factor as F;
 
-use std::cell::RefCell;
-use std::collections::{hash_map, trie_map, BitvSet, HashMap, HashSet, RingBuf, VecMap};
+use std::collections::RingBuf;
 
 use util::fast_bit_set::{BitSet, BitSetStorage};
 
-struct Table<T> {
+/*struct Table<T> {
     table: T,
 }
 
@@ -20,10 +19,9 @@ enum Action<S, R> {
     Done,
 }
 
-trait Rule<E, N> {}
+trait Rule<E, N> {}*/
 
 const EPSILON: uint = 0;
-
 
 pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<BitSetStorage<u32>> {
     // http://david.tribble.com/text/lrk_parsing.html
@@ -39,8 +37,8 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<BitSetStorage<u32>> {
     loop {
         // 2. Pop nonterminal X from the head of the queue
         let xh = match queue.pop_front() { Some(xh) => xh, None => break };
-        let mut x_first = first.index(xh);
-        let mut x_contains_epsilon = x_first.contains(EPSILON);
+        let x_first = first.index(xh);
+        let x_contains_epsilon = x_first.contains(EPSILON);
         let old_len = x_first.len(); // Initial length of first set.
 
         let x = ebnf.productions[xh].1;
@@ -110,7 +108,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<BitSetStorage<u32>> {
     Some(first)
 }
 
-pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, ebnf: &::Ebnf<'a>, first: &BitSetStorage<u32>) {
+pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf: &::Ebnf<'a>, first: &BitSetStorage<u32>) {
     for &f in term.iter() {
         match f {
             F::Lit(EPSILON, _) => continue,
@@ -131,10 +129,10 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, ebnf:
     set.insert(lookahead);
 }
 
-enum Lookahead<'a> {
+/*enum Lookahead<'a> {
     End,
     Symbol(&'a Ascii),
-}
+}*/
 
 /*struct Item<'a> {
     lhs: uint,
@@ -198,13 +196,13 @@ enum Lookahead<'a> {
 //+ end.
 //pub fn generate_
 
-impl<R> Table<VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>>
+/*impl<R> Table<VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>>
     where R: Rule<uint, uint>,
 {
     type T = VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>;
     type Actions = VecMap<Action<uint, R>>;
     type Gotos = VecMap<uint>;
-}
+}*/
 
 #[cfg(test)]
 mod tests {
@@ -251,8 +249,8 @@ mod tests {
         let firsts = lalr::first(&ebnf).unwrap();
         println!("{}", firsts);
         let end = ebnf.terminals.len();
-        let mut sets = BitSetStorage::new(1, ebnf.terminals.len(), 0).unwrap();
-        let mut set = sets.index(0);
+        let sets = BitSetStorage::new(1, ebnf.terminals.len(), 0).unwrap();
+        let set = sets.index(0);
         let first = lalr::first_for(&set, ebnf.productions[0].1[1][1 .. ], end, &ebnf, &firsts);
         // {1, 3, 4}
         println!("{}", first);
