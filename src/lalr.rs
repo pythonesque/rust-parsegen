@@ -21,13 +21,13 @@ enum Action<S, R> {
 
 trait Rule<E, N> {}*/
 
-const EPSILON: uint = 0;
+const EPSILON: usize = 0;
 
 pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<BitSetStorage<u32>> {
     // http://david.tribble.com/text/lrk_parsing.html
 
     // 1. Add all of the nonterminals of the grammar to the nonterminals queue;
-    let mut queue = range(0, ebnf.productions.len()).collect::<RingBuf<_>>();
+    let mut queue = (0 .. ebnf.productions.len()).collect::<RingBuf<_>>();
     let first = match BitSetStorage::new(ebnf.productions.len(), ebnf.terminals.len(), 0) {
         Some(first) => first,
         None => return None
@@ -108,7 +108,7 @@ pub fn first<'a>(ebnf: &::Ebnf<'a>) -> Option<BitSetStorage<u32>> {
     Some(first)
 }
 
-pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf: &::Ebnf<'a>, first: &BitSetStorage<u32>) {
+pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: usize, _ebnf: &::Ebnf<'a>, first: &BitSetStorage<u32>) {
     for &f in term.iter() {
         match f {
             F::Lit(EPSILON, _) => continue,
@@ -135,10 +135,10 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf
     pub struct RuleTable {
         mark1: Mark,
         mark2: Mark,
-        row_size: uint,
+        row_size: usize,
         free_list: FreeList<'a, RuleSet, RuleSet>
         table: Vec<Hole<'a, >>,
-        terms: Vec<uint>,
+        terms: Vec<usize>,
         table: Vec<Mark>, // rule_count * (symbols + 2)
         dirty: BitvSet, // per-rule dirty flag set when table is cleared
     }
@@ -162,7 +162,7 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf
             })
         }
 
-        pub fn row(row: uint, col: uint) {
+        pub fn row(row: usize, col: uint) {
             if dirty.insert(row) {
                 table[row]
             }
@@ -170,8 +170,8 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf
     }
 
     pub enum Symbol {
-        Term(uint),
-        Nonterm(uint),
+        Term(usize),
+        Nonterm(usize),
 
     }
 
@@ -263,7 +263,7 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf
 }*/
 
 /*struct Item<'a> {
-    lhs: uint,
+    lhs: usize,
     term: ::ParseTerm<'a>,
     lookahead: Lookahead<'a>,
 }*/
@@ -324,74 +324,78 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf
 //+ end.
 //pub fn generate_
 
-/*impl<R> Table<VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>>
-    where R: Rule<uint, uint>,
+/*impl<R> Table<VecMap<Row<VecMap<Action<usize, R>>, VecMap<uint>>>>
+    where R: Rule<usize, uint>,
 {
-    type T = VecMap<Row<VecMap<Action<uint, R>>, VecMap<uint>>>;
-    type Actions = VecMap<Action<uint, R>>;
-    type Gotos = VecMap<uint>;
+    type T = VecMap<Row<VecMap<Action<usize, R>>, VecMap<uint>>>;
+    type Actions = VecMap<Action<usize, R>>;
+    type Gotos = VecMap<usize>;
 }*/
 
 #[cfg(test)]
 mod tests {
     use lalr;
+    use ascii::AsciiCast;
     use util::fast_bit_set::BitSetStorage;
     use parser::{Parser, ParserContext};
-    use std::hash::sip::{SipHasher, SipState};
+    use std::hash::SipHasher;
     use test::Bencher;
 
-    const EBNF_EBNF_STRING: &'static [u8] = include_bin!("resources/ebnf.ebnf");
+    const EBNF_EBNF_STRING: &'static [u8] = include_bytes!("resources/ebnf.ebnf");
 
-    const ONE_LINE_EBNF_STRING: &'static [u8] = include_bin!("resources/one_line.ebnf");
+    const ONE_LINE_EBNF_STRING: &'static [u8] = include_bytes!("resources/one_line.ebnf");
 
-    const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
+    const ASN1_EBNF_STRING: &'static [u8] = include_bytes!("resources/asn1.ebnf");
 
-    const PAREN_EXPR: &'static [u8] = include_bin!("resources/paren_expr.ebnf");
+    const PAREN_EXPR: &'static [u8] = include_bytes!("resources/paren_expr.ebnf");
 
     #[test]
     pub fn first_set_t() {
-        let mut parser = Parser::<SipHasher, SipState>::with_capacity(8).unwrap();
+        let mut parser = Parser::<SipHasher>::with_capacity(8).unwrap();
         let ctx = ParserContext::new(1024);
         let string = //EBNF_EBNF_STRING
                      ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
                      //PAREN_EXPR
-                     .to_ascii();
+                     .to_ascii()
+                     .unwrap();
         let ebnf = parser.parse(&ctx, string).unwrap();
-        println!("{}", ebnf);
+        println!("{:?}", ebnf);
         let first = lalr::first(&ebnf).unwrap();
-        println!("{}", first);
+        println!("{:?}", first);
     }
 
     #[test]
     pub fn first_for() {
-        let mut parser = Parser::<SipHasher, SipState>::with_capacity(8).unwrap();
+        let mut parser = Parser::<SipHasher>::with_capacity(8).unwrap();
         let ctx = ParserContext::new(16);
         let string = //EBNF_EBNF_STRING
                      //ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
                      PAREN_EXPR
-                     .to_ascii();
+                     .to_ascii()
+                     .unwrap();
         let ebnf = parser.parse(&ctx, string).unwrap();
-        println!("{}", ebnf);
+        println!("{:?}", ebnf);
         let firsts = lalr::first(&ebnf).unwrap();
-        println!("{}", firsts);
+        println!("{:?}", firsts);
         let end = ebnf.terminals.len();
         let sets = BitSetStorage::new(1, ebnf.terminals.len(), 0).unwrap();
         let set = sets.index(0);
-        let first = lalr::first_for(&set, ebnf.productions[0].1[1][1 .. ], end, &ebnf, &firsts);
+        let first = lalr::first_for(&set, &ebnf.productions[0].1[1][1 .. ], end, &ebnf, &firsts);
         // {1, 3, 4}
-        println!("{}", first);
+        println!("{:?}", first);
     }
 
     #[bench]
     pub fn first_set_b(b: &mut Bencher) {
-        let mut parser = Parser::<SipHasher, SipState>::with_capacity(1024).unwrap();
+        let mut parser = Parser::<SipHasher>::with_capacity(1024).unwrap();
         //let ctx = ParserContext::new(8);
         let string = //EBNF_EBNF_STRING
                      ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
-                     .to_ascii();
+                     .to_ascii()
+                     .unwrap();
         b.iter(|| {
             let ref ctx = ParserContext::new(0x100);
             //let ref ctx = ParserContext::new(80);

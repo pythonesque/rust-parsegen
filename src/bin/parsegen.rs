@@ -1,8 +1,10 @@
 #![feature(slicing_syntax)]
 
+extern crate ascii;
 extern crate getopts;
 extern crate parsegen;
 
+use ascii::OwnedAsciiCast;
 use getopts::{optflag,getopts,OptGroup};
 use parsegen::{Parser, ParserContext};
 use std::io;
@@ -11,11 +13,11 @@ use std::os;
 
 fn parse<I, O>(parser: &mut Parser, mut input: I,  output: &mut O)
     where I: Reader, O: Writer {
-    const CONTEXT_CAPACITY: uint = 8192;
+    const CONTEXT_CAPACITY: usize = 8192;
     let string = input.read_to_end().unwrap().into_ascii();
     drop(input);
     let ref ctx = ParserContext::new(CONTEXT_CAPACITY);
-    (writeln!(output, "{}", parser.parse(ctx, string[]))).unwrap();
+    (writeln!(output, "{:?}", parser.parse(ctx, &**string.as_ref().unwrap()))).unwrap();
 }
 
 fn print_usage(program: &str, _opts: &[OptGroup]) {
@@ -27,7 +29,7 @@ fn print_usage(program: &str, _opts: &[OptGroup]) {
 fn main() {
     let args = os::args();
 
-    let ref program = args[0];
+    let program = &*args[0];
 
     let ref mut output = io::stdout();
 
@@ -38,16 +40,16 @@ fn main() {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };
-    const PARSER_CAPACITY: uint = 1024;
+    const PARSER_CAPACITY: usize = 1024;
     let ref mut parser = Parser::with_capacity(PARSER_CAPACITY).unwrap();
     if matches.opt_present("h") {
-        print_usage(program[], &opts);
+        print_usage(&*program, &opts);
         return;
     }
     if matches.free.is_empty() {
         parse(parser, io::stdin(), output)
     } else {
-        for path in matches.free.iter().map ( |p| Path::new(p[]) ) {
+        for path in matches.free.iter().map ( |p| Path::new(&*p) ) {
             let file = File::open(&path).unwrap();
             parse(parser, file, output);
         }

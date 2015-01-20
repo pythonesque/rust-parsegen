@@ -1,10 +1,11 @@
-use std::kinds::marker;
+use ascii::Ascii;
+use std::marker;
 use std::mem;
 use std::raw::Slice;
 
 pub use self::Token::*;
 
-#[deriving(PartialEq)]
+#[derive(PartialEq)]
 pub enum Token<'a> {
     //Ident/*(&'a [Ascii])*/,
     Ident(&'a [Ascii]),
@@ -32,7 +33,7 @@ macro_rules! consume_token {
         while $this.ptr != $this.end {
             let old = $this.ptr;
             $this.ptr = unsafe { $this.ptr.offset(1) };
-            match unsafe { (*old).to_byte() } {
+            match unsafe { (*old).as_byte() } {
                 $val => return true,
                 b' ' | b'\x09' ... b'\x0d' => continue,
                 _ => return false,
@@ -49,7 +50,7 @@ impl<'a> Tokens<'a> {
             Tokens {
                 //tok: string,
                 ptr: p,
-                end: p.offset(string.len() as int),
+                end: p.offset(string.len() as isize),
                 marker: marker::ContravariantLifetime::<'a>,
             }
         }
@@ -69,7 +70,7 @@ impl<'a> Tokens<'a> {
                 } else {
                     let old = self.ptr;
                     self.ptr = self.ptr.offset(1);
-                    let new = match (*old).to_byte() {
+                    let new = match (*old).as_byte() {
                         b'=' => Equals,
                         b'|' => VBar,
                         b'(' => LParen,
@@ -87,9 +88,9 @@ impl<'a> Tokens<'a> {
                                 old = self.ptr;
                                 if old == self.end { return UnterminatedStringLiteral }
                                 self.ptr = self.ptr.offset(1);
-                                if (*old).to_byte() == b'"' { break }
+                                if (*old).as_byte() == b'"' { break }
                             }
-                            let len = old.to_uint() - start.to_uint();
+                            let len = old as usize - start as usize;
                             Lit(mem::transmute(Slice { data: start, len: len  }))
                             //self.tok = mem::transmute(Slice { data: start, len: len  });
                             //Lit
@@ -102,9 +103,9 @@ impl<'a> Tokens<'a> {
                                 old = self.ptr;
                                 if old == self.end { return UnterminatedStringLiteral }
                                 self.ptr = self.ptr.offset(1);
-                                if (*old).to_byte() == b'\'' { break }
+                                if (*old).as_byte() == b'\'' { break }
                             }
-                            let len = old.to_uint() - start.to_uint();
+                            let len = old as usize - start as usize;
                             Lit(mem::transmute(Slice { data: start, len: len }))
                             //self.tok = mem::transmute(Slice { data: start, len: len });
                             //Lit
@@ -119,7 +120,7 @@ impl<'a> Tokens<'a> {
                         // aware of if you need to touch this code in the future.
                         _ => {
                             while self.ptr != self.end {
-                                static TBL: [bool, .. 256 as uint] = [
+                                static TBL: [bool ; 256 as usize] = [
  false, false, false, false, false, false, false, false, false, true,  true,  true,  true,  true,  false, false,
  false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
  true,  false, true,  false, false, false, false, true,  true,  true,  false, false, false, false, true,  false,
@@ -137,10 +138,10 @@ impl<'a> Tokens<'a> {
  false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
  false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
                             ];
-                                if *TBL.unsafe_get((*self.ptr).to_byte() as uint) { break }
+                                if *TBL.get_unchecked((*self.ptr).as_byte() as usize) { break }
                                 self.ptr = self.ptr.offset(1);
                             }
-                            let len = self.ptr.to_uint() - old.to_uint();
+                            let len = self.ptr as usize - old as usize;
                             Ident(mem::transmute(Slice { data: old, len: len }))
                             //self.tok = mem::transmute(Slice { data: old, len: len });
                             //Ident
@@ -155,13 +156,14 @@ impl<'a> Tokens<'a> {
 
 #[cfg(test)]
 mod tests {
+    use ascii::AsciiCast;
     use test::Bencher;
     use super::Tokens;
 
     #[bench]
     fn bench_next(b: &mut Bencher) {
         static STRING: &'static [u8] = br#"(a b c d = f "ghi" j 'klm')"#;
-        let string = STRING.to_ascii();
+        let string = STRING.to_ascii().unwrap();
         b.iter(|| {
             let mut tokens = Tokens::new(string);
             while tokens.next() != super::EOF {}

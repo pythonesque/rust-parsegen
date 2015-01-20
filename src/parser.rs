@@ -3,6 +3,7 @@ use Factor as F;
 use scanner as s;
 use scanner::Tokens;
 
+use ascii::Ascii;
 use arena::TypedArena;
 //use rustc::util::nodemap::{FnvHasher, FnvState};
 use std::cell::UnsafeCell;
@@ -10,14 +11,12 @@ use std::cmp;
 use std::default::Default;
 use std::collections::hash_map;
 //use std::collections::{HashMap};
-use std::hash::{Hasher, Writer};
-use std::hash::sip::{SipHasher, SipState};
+use std::hash::{Hasher, SipHasher};
 use std::intrinsics;
 use std::mem;
+use std::ops::{Deref, DerefMut};
 use std::ptr;
 use std::raw::Repr;
-use std::slice;
-use std::slice::{BoxedSlicePrelude};
 //use std::collections::PriorityQueue;
 
 use self::ExprType::*;
@@ -83,9 +82,9 @@ enum ParseFactor<'a> {
     // We actually might still be able to support them since we could identify them by making the
     // data pointer of the slice 0 for such identifiers, but I don't want to think about it for
     // now.
-    Opt(uint),
-    Rep(uint),
-    Group(uint),
+    Opt(usize),
+    Rep(usize),
+    Group(usize),
 }
 
 enum ExprType {
@@ -96,16 +95,16 @@ enum ExprType {
 }
 
 pub struct ParserContext<'a> {
-    factors: TypedArena<[UnsafeCell<ParseFactor<'a>>, .. STACK_VEC_MAX]>,
+    factors: TypedArena<[UnsafeCell<ParseFactor<'a>> ; STACK_VEC_MAX]>,
     vec_factors: TypedArena<UnsafeCell<Vec<UnsafeCell<ParseFactor<'a>>>>>,
-    terms: TypedArena<[ParseTerm<'a>, .. STACK_VEC_MAX]>,
+    terms: TypedArena<[ParseTerm<'a> ; STACK_VEC_MAX]>,
     vec_terms: TypedArena<UnsafeCell<Vec<ParseTerm<'a>>>>,
 }
 
-pub static MIN_PARSER_CONTEXT_CAPACITY: uint = 8;
+pub static MIN_PARSER_CONTEXT_CAPACITY: usize = 8;
 
 impl<'a> ParserContext<'a> {
-    pub fn new(capacity: uint) -> ParserContext<'a> {
+    pub fn new(capacity: usize) -> ParserContext<'a> {
         ParserContext {
             factors: TypedArena::with_capacity(cmp::max(MIN_PARSER_CONTEXT_CAPACITY, capacity)),
             vec_factors: TypedArena::with_capacity(cmp::max(MIN_PARSER_CONTEXT_CAPACITY, capacity >> 2)),
@@ -118,27 +117,27 @@ impl<'a> ParserContext<'a> {
 // Parse context, holds information required by the parser (and owns any allocations it makes)
 //pub struct Parser<'a, Hasher = XXHasher, State = XXState> {
 //pub struct Parser<'a, Hasher = FnvHasherDefault, State = FnvState> {
-pub struct Parser<'a, Hasher = SipHasher, State = SipState> {
-    capacity: uint, // Guess at how many symbols to parse,
+pub struct Parser<'a, Hasher = SipHasher> {
+    capacity: usize, // Guess at how many symbols to parse,
     stack: Vec<(StackVec<'a, ParseTerm<'a>>, StackVec<'a, UnsafeCell<ParseFactor<'a>>>, ExprType)>, // Stored in the parse context so its allocation is reusable.
     /*tx: Sender<Option<(&'static [Ascii], &'static [ParseTerm<'static>])>>,
     rx: Receiver<Option<Vec<(&'static [Ascii], &'static [ParseTerm<'static>])>>>,*/
     //seed: Hasher,
 }
 
-const STACK_VEC_MAX: uint = 4; // Arrived at by highly scientific guess and check algorithm
+const STACK_VEC_MAX: usize = 4; // Arrived at by highly scientific guess and check algorithm
 
 struct StackVec<'a, T> where T: 'a {
     vec: &'a mut Vec<T>,
-    len: uint,
-    stk: [T, .. STACK_VEC_MAX],
+    len: usize,
+    stk: [T ; STACK_VEC_MAX],
 }
 
 impl<'a,T> StackVec<'a, T> where T: 'a {
     #[inline(always)]
     fn push<'b>(&'b mut self, value: T, arena: &'a TypedArena<UnsafeCell<Vec<T>>>) {
-        const STACK_VEC_LAST: uint = STACK_VEC_MAX - 1;
-        const STACK_VEC_PENULTIMATE: uint = STACK_VEC_LAST - 1;
+        const STACK_VEC_LAST: usize = STACK_VEC_MAX - 1;
+        const STACK_VEC_PENULTIMATE: usize = STACK_VEC_LAST - 1;
         match self.len {
             l @ 0 ... STACK_VEC_PENULTIMATE => {
                 self.stk[l] = value;
@@ -156,16 +155,16 @@ impl<'a,T> StackVec<'a, T> where T: 'a {
     }
 
     #[inline(always)]
-    fn into_slice(mut self, arena: &'a TypedArena<[T, .. STACK_VEC_MAX]>) -> Option<&'a [T]> {
+    fn into_slice(mut self, arena: &'a TypedArena<[T ; STACK_VEC_MAX]>) -> Option<&'a [T]> {
         match self.len {
             0 => None,
             STACK_VEC_MAX => {
                 let vec = mem::replace(&mut self.vec, unsafe { mem::uninitialized() });
-                Some(vec.as_slice())
+                Some(&**vec)
             },
             l => {
                 let stk = mem::replace(&mut self.stk, unsafe { mem::uninitialized() });
-                Some(arena.alloc(stk).as_slice()[ .. l])
+                Some(&arena.alloc(stk)[][ .. l])
             },
         }
     }
@@ -173,7 +172,7 @@ impl<'a,T> StackVec<'a, T> where T: 'a {
 
 
 macro_rules! parse_factor {
-    ($tokens:expr, $ctx:expr, $terminals:expr, $count_terms:expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt)|*) => {{
+    ($tokens:expr, $ctx:expr, $terminals:expr, $count_terms:expr, $stack:expr, $terms:expr, $factors:expr, $term: expr, $expr_lifetime:expr, $($term_token:pat => $term_lifetime:stmt),*) => {{
         match $tokens.next() {
             s::Ident(i) =>$factors.push(UnsafeCell::new(Ident(i)), &$ctx.vec_factors),
             //s::Ident =>$factors.push(UnsafeCell::new(Ident($tokens.tok)), &$ctx.vec_factors),
@@ -208,7 +207,7 @@ macro_rules! parse_factor {
     }
 }}
 
-static EMPTY_ASCII: [Ascii, .. 0] = [];
+static EMPTY_ASCII: [Ascii ; 0] = [];
 
 macro_rules! parse_terms {
     ($tokens:expr, $ctx:expr, $productions:expr, $terminals:expr, $anon_factors:expr, $count_terms:expr, $stack:expr, $terms:expr, $factors:expr, $term:expr, $expr_type:expr, $term_token:pat, $term_lifetime:expr, $cont_lifetime:expr) => {{
@@ -220,7 +219,7 @@ macro_rules! parse_terms {
             }
             'factor: loop {
                 // Parse next factor OR VBar => end term OR terminal => end expression
-                parse_factor!($tokens, $ctx, $terminals, $count_terms, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor } | $term_token => { break 'term });
+                parse_factor!($tokens, $ctx, $terminals, $count_terms, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor }, $term_token => { break 'term });
             }
             $terms.push($factors.into_slice(&$ctx.factors).unwrap(), &$ctx.vec_terms);
             $factors = mem::uninitialized();
@@ -233,7 +232,7 @@ macro_rules! parse_terms {
                 $anon_factors += 1;
                 $factors.push(UnsafeCell::new($expr_type($anon_factors)), &$ctx.vec_factors);
                 $productions.push(UnsafeCell::new((
-                    EMPTY_ASCII[],
+                    &EMPTY_ASCII[],
                     $terms.into_slice(&$ctx.terms).unwrap()
                 )));
                 $terms = ts;
@@ -256,7 +255,7 @@ macro_rules! parse_expression {
                 factors.len = 0;
                 loop {
                     match term {
-                        ProdEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, (|_| intrinsics::unreachable()), s::Semi, break 'expr, continue 'expr),
+                        ProdEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, (|:_| intrinsics::unreachable()), s::Semi, break 'expr, continue 'expr),
                         OptEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
                         RepEnd => {
                             /*$terms.push(mem::transmute(std::raw::Slice { data: 0 as *const _, len: 0 }));
@@ -280,13 +279,13 @@ macro_rules! parse_expression {
     }}
 }
 
-impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
+impl<'a, H> Parser<'a, H> where H: Default + Hasher {
     // Create a new parse context from a given string
-    pub fn new() -> Result<Parser<'a, H, T>, ()> {
+    pub fn new() -> Result<Parser<'a, H>, ()> {
         Parser::with_capacity(hash_map::INITIAL_CAPACITY)
     }
 
-    pub fn with_capacity(capacity: uint) -> Result<Parser<'a, H, T>, ()> {
+    pub fn with_capacity(capacity: usize) -> Result<Parser<'a, H>, ()> {
         /*let (txmain, rxmain) = channel();
         let (txwork, rxwork) = channel();
         txmain.send(None);
@@ -335,7 +334,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
         let guard = unsafe {
             ParserGuard {
                 inner_: mem::transmute(self),
-                marker_: ::std::kinds::marker::CovariantLifetime,
+                marker_: ::std::marker::CovariantLifetime,
             }
         };
         // Synchronize with worker
@@ -426,7 +425,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                 //productions_ = rx.recv().unwrap(); // If it's not Some(x) that's a logic bug.
                 let mut productions = unsafe {
                     let mut first = productions_.as_ptr();
-                    let mut last = first.offset(productions_.len() as int);
+                    let mut last = first.offset(productions_.len() as isize);
                     let mut first_inner = ptr::read((&*first).get() as *const (&[Ascii], ParseExpr));
                     while first != last {
                         if first_inner.0.len() == 0 {
@@ -445,15 +444,15 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                     mem::transmute::<_, Vec<(&[Ascii], ParseExpr)>>(productions_)
                 };
                 let len = productions.len();
-                productions.slice_mut(0, len - anon_factors).sort_by( |a, b| a.0.cmp(b.0) );
+                productions[.. len - anon_factors].sort_by( |a, b| a.0.cmp(b.0) );
                 let productions_ = productions;
                 let productions = productions_[].repr();
                 // In general, we shouldn't be able to fail for this section.
                 let mut error = Ok::<_, ::Error>(());
                 let productions = unsafe {
                     let productions = mem::transmute::<_, &[(&[Ascii], ParseExpr)]>(productions);
-                    let search_productions = productions[0 .. productions.len() - anon_factors ];
-                    let mut last_tag = EMPTY_ASCII[];
+                    let search_productions = &productions[0 .. productions.len() - anon_factors ];
+                    let mut last_tag = &EMPTY_ASCII[];
                     let mut count = len - anon_factors;
                     productions_.map_in_place( |(tag, pexp)| {
                         if count != 0 {
@@ -473,16 +472,16 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
                             for pfactor in t.iter() {
                                 let factor = match *pfactor.get() {
                                     Ident(i) => F::Ref(match
-                                        search_productions.binary_search(|&(id, _)| id.cmp(i)) {
-                                        slice::Found(id) => id,
+                                        search_productions.binary_search_by(|&(id, _)| id.cmp(i)) {
+                                        Ok(id) => id,
                                         _ => {
                                             // Acknowledge the error and continue (can't exit).
                                             error = Err(E::MissingProduction);
                                             0
                                         }
                                     }),
-                                    Lit(l) => F::Lit(match terminals.binary_search_elem(&l) {
-                                        slice::Found(id) => id,
+                                    Lit(l) => F::Lit(match terminals.binary_search(&l) {
+                                        Ok(id) => id,
                                         _ => intrinsics::unreachable()
                                     }, 0),
                                     Opt(id) => F::Opt(len - id),
@@ -509,7 +508,7 @@ impl<'a, H, T> Parser<'a, H> where H: Default + Hasher<T>, T: Writer {
 }
 
 struct ParserGuard<'a, 'b: 'c, 'c> {
-    marker_: ::std::kinds::marker::CovariantLifetime<'a>,
+    marker_: ::std::marker::CovariantLifetime<'a>,
     inner_: &'c mut Parser<'b>
 }
 
@@ -522,10 +521,11 @@ impl<'a, 'b, 'c> Drop for ParserGuard<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> Deref<Parser<'b>> for ParserGuard<'a, 'b, 'c> {
+impl<'a, 'b, 'c> Deref for ParserGuard<'a, 'b, 'c> {
+    type Target = Parser<'b>;
     fn deref(&self) -> &Parser<'b> { self.inner_ }
 }
 
-impl<'a, 'b, 'c> DerefMut<Parser<'b>> for ParserGuard<'a, 'b, 'c> {
+impl<'a, 'b, 'c> DerefMut for ParserGuard<'a, 'b, 'c> {
     fn deref_mut(&mut self) -> &mut Parser<'b> { self.inner_ }
 }

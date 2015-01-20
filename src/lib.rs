@@ -1,6 +1,8 @@
-#![feature(associated_types,unboxed_closures,unsafe_destructor,slicing_syntax,macro_rules,default_type_params,tuple_indexing,globs)]
+#![allow(unstable)]
+#![feature(box_syntax,unboxed_closures,unsafe_destructor,slicing_syntax)]
 
 extern crate arena;
+extern crate ascii;
 extern crate libc;
 //extern crate rustc;
 //extern crate sync;
@@ -9,6 +11,7 @@ extern crate test;
 use self::Factor::*;
 
 //use rustc::util::nodemap::FnvHashMap;
+use ascii::{Ascii, AsciiStr};
 use std::fmt;
 
 pub use parser::{Parser, ParserContext};
@@ -18,7 +21,7 @@ mod scanner;
 mod parser;
 pub mod util;
 
-#[deriving(PartialEq)]
+#[derive(PartialEq)]
 // The actual Exp structure.
 // Note that it takes everything by reference, rather than owning it--this is mostly done just so
 // we can allocate Ebnfs statically (since we don't have to call Vec).  It does complicate the code
@@ -35,7 +38,7 @@ pub struct Ebnf<'a> {
     //productions: HashMap<&'a [Ascii], Expr<'a>, XXHasher>,
 
     //productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
-    n_terms: uint,
+    n_terms: usize,
     productions: Vec<(&'a [Ascii], Expr<'a>)>,//HashMap<&'a [Ascii], Expr<'a>, FnvHasherDefault>,
     terminals: Vec<&'a [Ascii]>,
     comment: Option<&'a [Ascii]>,
@@ -43,17 +46,17 @@ pub struct Ebnf<'a> {
 
 impl<'a> fmt::Show for Ebnf<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "Ebnf {{ title: {}, terminals: {{\n", self.title.as_ref().map( |s| s.as_str_ascii() )));
+        try!(write!(f, "Ebnf {{ title: {:?}, terminals: {{\n", self.title.as_ref().map( |s| s.as_str() )));
         for (index, &t) in self.terminals.iter().enumerate() {
-            try!(write!(f, "#{} = \"{}\"\n", index, t.as_str_ascii().escape_default()));
+            try!(write!(f, "#{} = \"{}\"\n", index, t.as_str().escape_default()));
         }
         try!(write!(f, "}}, productions: {{\n"));
         //for (&id, &e) in self.productions.iter() {
         for (index, &(id, e)) in self.productions.iter().enumerate() {
-            try!(write!(f, "<{}> {}: ", index, id.as_str_ascii()));
+            try!(write!(f, "<{}> {}: ", index, id.as_str()));
             try!(show_expr(f, "", e, ".\n"));
         }
-        write!(f, "}}, comment: {} }}", self.comment.as_ref().map( |s| s.as_str_ascii() ))
+        write!(f, "}}, comment: {:?} }}", self.comment.as_ref().map( |s| s.as_str() ))
     }
 }
 
@@ -61,13 +64,13 @@ pub type Expr<'a> = &'a [Term<'a>];
 
 pub type Term<'a> = &'a [Factor<'a>];
 
-#[deriving(PartialEq)]
+#[derive(Copy,PartialEq)]
 pub enum Factor<'a> {
-    Ref(uint),
-    Lit(uint, uint),
-    Opt(uint),
-    Rep(uint),
-    Group(uint),
+    Ref(usize),
+    Lit(usize, usize),
+    Opt(usize),
+    Rep(usize),
+    Group(usize),
 }
 
 fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
@@ -95,7 +98,7 @@ fn show_expr(f: &mut fmt::Formatter, l: &str, e: Expr, r: &str) -> fmt::Result {
     write!(f, "{}", r)
 }
 
-impl<'a> fmt::Show for Factor<'a> {
+impl<'a> fmt::String for Factor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Ref(e) => write!(f, "<{}>", e),
@@ -107,7 +110,7 @@ impl<'a> fmt::Show for Factor<'a> {
     }
 }
 
-#[deriving(PartialEq,Show)]
+#[derive(Copy,PartialEq,Show)]
 pub enum Error {
     UnterminatedStringLiteral, // Missing an end double quote during string parsing
     ExpectedLBrace, // Expected a '{' token
@@ -123,6 +126,7 @@ pub enum Error {
 
 #[cfg(test)]
 mod tests {
+    use ascii::{Ascii, AsciiCast};
     use test::Bencher;
     use parser::{Parser, ParserContext};
 
@@ -132,13 +136,13 @@ mod tests {
         parser.parse(ctx, string)
     }
 
-    const EBNF_EBNF_STRING: &'static [u8] = include_bin!("resources/ebnf.ebnf");
+    const EBNF_EBNF_STRING: &'static [u8] = include_bytes!("resources/ebnf.ebnf");
 
-    const ONE_LINE_EBNF_STRING: &'static [u8] = include_bin!("resources/one_line.ebnf");
+    const ONE_LINE_EBNF_STRING: &'static [u8] = include_bytes!("resources/one_line.ebnf");
 
-    const ASN1_EBNF_STRING: &'static [u8] = include_bin!("resources/asn1.ebnf");
+    const ASN1_EBNF_STRING: &'static [u8] = include_bytes!("resources/asn1.ebnf");
 
-    const PAREN_EXPR: &'static [u8] = include_bin!("resources/paren_expr.ebnf");
+    const PAREN_EXPR: &'static [u8] = include_bytes!("resources/paren_expr.ebnf");
 
     #[bench]
     fn bench_decode(b: &mut Bencher)
@@ -148,7 +152,8 @@ mod tests {
                      ASN1_EBNF_STRING
                      //PAREN_EXPR
                      //ONE_LINE_EBNF_STRING
-                     .to_ascii();
+                     .to_ascii()
+                     .unwrap();
         /*let ref mut parser = Parser::with_capacity(1024);
         let ref ctx = ParserContext::new(8192);*/
         /*static mut static_parser: *mut Parser<'static> = 0 as *mut _;//unsafe { std::mem::uninitialized(); }
@@ -183,16 +188,17 @@ mod tests {
         let string = //EBNF_EBNF_STRING
                     ASN1_EBNF_STRING
                      //ONE_LINE_EBNF_STRING
-                     .to_ascii();
+                     .to_ascii()
+                     .unwrap();
         //let mut parser = Parser::new().unwrap();
         let mut parser = Parser::with_capacity(1024).unwrap();
-        for _ in range(0, 1000u) {
+        for _ in (0 .. 1000u16) {
             //let ctx = ParserContext::new(8); // or here...
             let ctx = ParserContext::new(8192);
             let /*foo*/_ = match try_decode(&mut parser, &ctx, string) {
-                Ok(c) => {println!("{}", c); c }
+                Ok(c) => {println!("{:?}", c); c }
                 Err(e) => //{println!("{}", e); break },
-                        panic!("{}", e),
+                        panic!("{:?}", e),
             };
             /*for _ in range(0u16, 1000) {
                 let ctx = ParserContext::new(); // or here...

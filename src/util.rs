@@ -1,13 +1,14 @@
 pub mod fast_bit_set {
     use std::cell::Cell;
     use std::collections::BitvSet;
-    use std::iter::AdditiveIterator;
+    use std::iter::{self, AdditiveIterator};
     use std::fmt;
     use std::mem;
     use std::num::{Int, UnsignedInt};
+    use std::ops::{BitAnd, BitOr, Not, Shl, Shr};
     use std::raw::Repr;
     use std::raw::Slice as RawSlice;
-    use std::{u8, uint};
+    use std::{u8, usize};
 
     // `bit_exp`: an exponent such that `2^bit_exp` == `bits_per_elem`.
     // `bits_per_elem` must divide `T`'s size in bits by a power of 2.
@@ -26,21 +27,27 @@ pub mod fast_bit_set {
     //  1u << (bit_exp) does not overflow
     pub struct $storage<T> {
         storage: Vec<Cell<T>>, // backing storage for sets
-        sets: uint, // total number of sets
-        cells: uint, // cached: total number of cells per set
-        set_size: uint, // cached: total elements per set
+        sets: usize, // total number of sets
+        cells: usize, // cached: total number of cells per set
+        set_size: usize, // cached: total elements per set
     }
 
     impl<T> $storage<T>
-    where T: BitAnd<T, T> + BitOr<T, T> + Copy + PartialEq + Not<T> + Shl<uint, T> + Shr<uint, T> {
+    where T: BitAnd<T,Output=T>,
+          T: BitOr<T,Output=T>,
+          T: Copy,
+          T: PartialEq,
+          T: Not<Output=T>,
+          T: Shl<usize, Output=T>,
+          T: Shr<usize, Output=T> {
         /// `sets`: total number of sets to allocate storage for
         ///
         /// `set_size`: maximum number of elements per set (nonresizable)
         ///
         ///
         /// `initial`: the initial element (`std::mem::uninitialized()` is acceptable)
-        pub fn new(sets: uint,
-                   set_size: uint, elem: T) -> Option<$storage<T>> {
+        pub fn new(sets: usize,
+                   set_size: usize, elem: T) -> Option<$storage<T>> {
             // This whole function is checked really carefully to ensure that we get sane / defined
             // results in subsequent function calls.
             let cell_size = mem::size_of::<T>();
@@ -50,7 +57,7 @@ pub mod fast_bit_set {
                 Some(bits) => bits,
             };
             // Is there a saturating bit shift?
-            if $bit_exp >= uint::BITS || !cell_bits.is_power_of_two() ||
+            if $bit_exp >= usize::BITS || !cell_bits.is_power_of_two() ||
                !cell_align.is_power_of_two() || set_size == 0 {
                 // Don't feel like handling these, sorry
                 return None
@@ -69,19 +76,19 @@ pub mod fast_bit_set {
                 None => return None
             } - 1) / cell_bits + 1;
             sets.checked_mul(cells).map( |size| $storage {
-                storage: Vec::from_elem(size, Cell::new(elem)),
+                storage: iter::repeat(Cell::new(elem)).take(size).collect(),
                 set_size: set_size,
                 sets: sets,
                 cells: cells,
             })
         }
 
-        pub fn index<'a>(&self, index: uint) -> $set<'a, T> {
+        pub fn index<'a>(&self, index: usize) -> $set<'a, T> {
             assert!(index < self.sets);
             unsafe {
                 $set {
                     storage: mem::transmute(RawSlice {
-                        data: self.storage.as_ptr().offset((index * self.cells) as int),
+                        data: self.storage.as_ptr().offset((index * self.cells) as isize),
                         len: self.cells,
                     }),
                 }
@@ -94,10 +101,10 @@ pub mod fast_bit_set {
             let zero = unsafe { mem::zeroed::<T>() };
             let cell_exp = cell_size.trailing_zeros();
             let index_exp = cell_exp + 3 - $bit_exp;
-            const ELEM_EXP: uint = 1 << $bit_exp;
+            const ELEM_EXP: usize = 1 << $bit_exp;
             self.storage.chunks(self.cells).map( |cells| {
                 let mut set = BitvSet::with_capacity(self.cells);
-                for (index, &cell) in cells.iter().enumerate() {
+                for (index, cell) in cells.iter().enumerate() {
                     // Hopefully this will get evaluated at compile time.  This is intended to
                     // avoid undefined behavior from overlong shifts without causing runtime
                     // overhead and is the primary reason we are using a macro at all.
@@ -123,9 +130,15 @@ pub mod fast_bit_set {
     }
 
     impl<'a, T> fmt::Show for $storage<T>
-    where T: BitAnd<T, T> + BitOr<T, T> + Copy + PartialEq + Not<T> + Shl<uint, T> + Shr<uint, T> {
+    where T: BitAnd<T,Output=T>,
+          T: BitOr<T,Output=T>,
+          T: Copy,
+          T: PartialEq,
+          T: Not<Output=T>,
+          T: Shl<usize, Output=T>,
+          T: Shr<usize, Output=T> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "{}", self.to_bitv_sets())
+            write!(f, "{:?}", self.to_bitv_sets())
         }
     }
 
@@ -134,15 +147,24 @@ pub mod fast_bit_set {
     }
 
     impl<'a, T> $set<'a, T>
-    where T: BitAnd<T, T> + BitOr<T, T> + Copy + PartialEq + Not<T> + Shl<uint, T> + Shr<uint, T> + fmt::Show + Int {
+    where T: BitAnd<T,Output=T>,
+          T: BitOr<T,Output=T>,
+          T: Copy,
+          T: PartialEq,
+          T: Not<Output=T>,
+          T: Shl<usize, Output=T>,
+          T: Shr<usize, Output=T>,
+          T: fmt::Show,
+          T: Int,
+    {
         #[inline(always)]
-        fn action<F>(&self, elem: uint, action: F) -> bool where F: FnOnce(*const Cell<T>, T) -> bool {
+        fn action<F>(&self, elem: usize, action: F) -> bool where F: FnOnce(*const Cell<T>, T) -> bool {
             let cell_size = mem::size_of::<T>();
             let cell_bits = cell_size << 3;
             let zero = unsafe { mem::zeroed::<T>() };
             let cell_exp = cell_size.trailing_zeros();
             let index_exp = cell_exp + 3 - $bit_exp;
-            const ELEM_EXP: uint = 1 << $bit_exp;
+            const ELEM_EXP: usize = 1 << $bit_exp;
             let index = elem >> index_exp;
             if index >= self.storage.len() { return false }
             let mask = if cell_bits == ELEM_EXP {
@@ -154,13 +176,13 @@ pub mod fast_bit_set {
                 elem_mask << (subindex << $bit_exp)
             };
             unsafe {
-                let cell = self.storage.as_ptr().offset(index as int);
+                let cell = self.storage.as_ptr().offset(index as isize);
                 action(cell, mask)
             }
         }
 
         #[inline]
-        pub fn contains(&self, elem: uint) -> bool {
+        pub fn contains(&self, elem: usize) -> bool {
             self.action(elem, |: cell: *const Cell<T>, mask| unsafe {
                 let cell_ = (*cell).get();
                 let success = cell_ & mask != mem::zeroed();
@@ -169,7 +191,7 @@ pub mod fast_bit_set {
         }
 
         #[inline]
-        pub fn insert(&self, elem: uint) -> bool {
+        pub fn insert(&self, elem: usize) -> bool {
             self.action(elem, |: cell: *const Cell<T>, mask| unsafe {
                 let cell_ = (*cell).get();
                 let success = cell_ & mask == mem::zeroed();
@@ -179,7 +201,7 @@ pub mod fast_bit_set {
         }
 
         #[inline]
-        pub fn remove(&self, elem: uint) -> bool {
+        pub fn remove(&self, elem: usize) -> bool {
             self.action(elem, |: cell: *const Cell<T>, mask| unsafe {
                 let cell_ = (*cell).get();
                 let success = cell_ & mask != mem::zeroed();
@@ -197,7 +219,7 @@ pub mod fast_bit_set {
             assert!(self.storage.len() >= len);
             let mut ours = self.storage.as_ptr();
             unsafe {
-                let end = theirs.offset(len as int);
+                let end = theirs.offset(len as isize);
                 while theirs != end {
                     let o = (*ours).get();
                     let t = (*theirs).get();
@@ -209,8 +231,8 @@ pub mod fast_bit_set {
         }
 
         #[inline]
-        pub fn len(&self) -> uint {
-            if $bit_exp == 0u {
+        pub fn len(&self) -> usize {
+            if $bit_exp == 0us {
                 self.storage.iter().map( |cell| cell.get().count_ones() ).sum()
             } else {
                 let cell_size = mem::size_of::<T>();
@@ -218,7 +240,7 @@ pub mod fast_bit_set {
                 let zero = unsafe { mem::zeroed::<T>() };
                 let cell_exp = cell_size.trailing_zeros();
                 let index_exp = cell_exp + 3 - $bit_exp;
-                const ELEM_EXP: uint = 1 << $bit_exp;
+                const ELEM_EXP: usize = 1 << $bit_exp;
                 self.storage.iter().map( |cell| {
                     if cell_bits == ELEM_EXP {
                         if cell.get() != zero { 1 } else { 0 }
@@ -237,10 +259,10 @@ pub mod fast_bit_set {
             }
         }
     }
-    })
+    });
 
-    fast_bit_set!(BitSetStorage, BitSet, 0)
-    fast_bit_set!(ByteSetStorage, ByteSet, 3)
+    fast_bit_set!(BitSetStorage, BitSet, 0);
+    fast_bit_set!(ByteSetStorage, ByteSet, 3);
 }
 
 
@@ -255,14 +277,14 @@ mod dirty_free_list {
         alloc: F,
     }
 
-    pub static FREE_LIST_DEFAULT_CAPACITY: uint = 8;
+    pub static FREE_LIST_DEFAULT_CAPACITY: usize = 8;
 
     impl<'a, T, F> FreeList<'a, T, F>  where F: Fn() -> T {
         pub fn new(alloc: F) -> FreeList<'a, T, F> {
             FreeList::with_capacity(FREE_LIST_DEFAULT_CAPACITY, alloc)
         }
 
-        pub fn with_capacity(capacity: uint, alloc: F) -> FreeList<'a, T, F> {
+        pub fn with_capacity(capacity: usize, alloc: F) -> FreeList<'a, T, F> {
             FreeList {
                 arena: TypedArena::with_capacity(capacity),
                 first: RefCell::new(None),
@@ -272,7 +294,7 @@ mod dirty_free_list {
 
         fn alloc(&'a self) -> &'a mut Node<'a, T> {
             let mut first = self.first.borrow_mut();
-            let first = first.deref_mut();
+            let first = &mut *first;
             let node = match first.take() {
                 Some(first) => first,
                 None => self.arena.alloc(Node { data: (self.alloc)(), next: None })
