@@ -258,7 +258,18 @@ macro_rules! parse_expression {
                     match term {
                         ProdEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, (|_| intrinsics::unreachable()), s::Semi, break 'expr, continue 'expr),
                         OptEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
-                        RepEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
+                        RepEnd => {
+                            /*$terms.push(mem::transmute(std::raw::Slice { data: 0 as *const _, len: 0 }));
+                            $factors.len = 1;
+                            $anon_factors += 1;
+                            $factors.stk[0] = UnsafeCell::new($expr_type($anon_factors));
+                            $productions.push(UnsafeCell::new((
+                            $stack.push(($terms, $factors, ));
+                            $term = OptEnd;
+                            $count_terms += 1;
+                            $expr_lifetime*/
+                            parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Group, s::RBrace, break 'expr, continue 'expr)
+                        },
                         GroupEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
                     }
                 }

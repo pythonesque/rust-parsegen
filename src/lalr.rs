@@ -129,6 +129,134 @@ pub fn first_for<'a>(set: &BitSet<u32>, term: ::Term<'a>, lookahead: uint, _ebnf
     set.insert(lookahead);
 }
 
+/*mod rule_table {
+    type Mark = u8;
+
+    pub struct RuleTable {
+        mark1: Mark,
+        mark2: Mark,
+        row_size: uint,
+        free_list: FreeList<'a, RuleSet, RuleSet>
+        table: Vec<Hole<'a, >>,
+        terms: Vec<uint>,
+        table: Vec<Mark>, // rule_count * (symbols + 2)
+        dirty: BitvSet, // per-rule dirty flag set when table is cleared
+    }
+
+    impl RuleTable {
+        pub fn new(ebnf: ::Ebnf<'a>) -> Option<RuleTable> {
+            let row_size = ebnf.terminals.count() + ebnf.productions.count();
+            let size = match ebnf.n_terms.checked_mul(row_size) { Some(s) => s, None => return None };
+            Some(RuleTable {
+                mark1: 1,
+                mark2: 2,
+                row_size: row_size,
+                table: {
+                    let mut table = Vec::with_capacity(size);
+                    // This is safe because we will clear each row if the dirty bit is not set before
+                    // providing access.
+                    unsafe { table.set_len(size); }
+                    table
+                },
+                dirty: BitvSet::with_capacity(ebnf.n_terms),
+            })
+        }
+
+        pub fn row(row: uint, col: uint) {
+            if dirty.insert(row) {
+                table[row]
+            }
+        }
+    }
+
+    pub enum Symbol {
+        Term(uint),
+        Nonterm(uint),
+
+    }
+
+    /*struct Symbols {
+
+    }*/
+}*/
+
+/*pub fn gen_closure_items<'a>(ebnf: ebnf: ::Ebnf<'a>, first: &[BitvSet]) {
+
+}*/
+
+/*pub fn closure<'a>(kernel: Item<'a>, ebnf: &::Ebnf<'a>, first: &[HashSet<&'a Ascii>]) {
+    let mut set = HashSet::new();
+    let mut queue = RingBuf::new();
+    queue.push_back(kernel);
+    loop {
+        let item = match queue.pop_ront() { Some(i) => i, None => break };
+        if set.insert(item) {
+            let mut new_term = item.term.split_at(1);
+            match item[0] {
+                Lit(_) => continue,
+                Ref(i) | Group(i) => {
+                    for &lookahead in first[i].iter() {
+                        queue.push_back(Item { lhs: i, term: ebnf.productions[i].1
+                    }
+                }
+            }
+            for &lookahead in first[item.lhs].iter() {
+                queue.push_back(Item { lhs: item.term});
+            }
+        }
+    }
+}*/
+
+/*impl<T, R, Actions, Gotos, State, Terminal, NonTerminal> Table<T>
+    where T: Map<State, Row<Actions, Gotos>>,
+          Actions: Map<Terminal, Action<State, R>>,
+          Gotos: Map<NonTerminal, State>,
+          R: Rule<Terminal, NonTerminal>,
+{
+
+}*/
+/*fn make_items(ebnf: &Ebnf<'a>) {
+
+    let mut items = Vec::new();
+    for &(_, e) in ebnf.productions.iter() { // rule lhs
+        for t in e.iter() { // rule rhs
+            for f in t.iter() { // rule factor
+                items.push(f);
+            }
+        }
+    }
+
+    let mut item_sets = Vec::new();
+
+    let rules = HashMap::new();
+    let mut items = Vec::new();
+    for &(_, e) in ebnf.productions.iter() {
+        for t in e.iter() {
+            for f in t.iter() {
+                items.push(f);
+            }
+        }
+    }
+}*/
+
+/*fn closure(ebnf: &Ebnf<'a>) {
+    let ref i0 = ebnf[0];
+    let closure_items = HashSet::new();
+    //let mut queue = ebnf.productions.iter().map( |&(_, e)| e ).collect::<RingBuf<_>>();
+    let mut stack = Vec::new();
+    stack.push(i0);
+    loop {
+        match stack.pop() {
+            Some(e) => {
+                if closure_items.insert(e) {
+                }
+            },
+            None => break
+        }
+    }
+}*/
+
+
 /*enum Lookahead<'a> {
     End,
     Symbol(&'a Ascii),
