@@ -3,7 +3,7 @@ use Factor as F;
 use scanner as s;
 use scanner::Tokens;
 
-use ascii::Ascii;
+use ascii::{Ascii, AsciiCast};
 use arena::TypedArena;
 //use rustc::util::nodemap::{FnvHasher, FnvState};
 use std::cell::UnsafeCell;
@@ -13,6 +13,7 @@ use std::collections::hash_map;
 //use std::collections::{HashMap};
 use std::hash::{Hasher, SipHasher};
 use std::intrinsics;
+use std::marker::ContravariantLifetime;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
@@ -87,6 +88,7 @@ enum ParseFactor<'a> {
     Group(usize),
 }
 
+#[derive(Show)]
 enum ExprType {
     ProdEnd,
     OptEnd,
@@ -128,7 +130,8 @@ pub struct Parser<'a, Hasher = SipHasher> {
 const STACK_VEC_MAX: usize = 4; // Arrived at by highly scientific guess and check algorithm
 
 struct StackVec<'a, T> where T: 'a {
-    vec: &'a mut Vec<T>,
+    marker: ContravariantLifetime<'a>,
+    vec: *mut Vec<T>,
     len: usize,
     stk: [T ; STACK_VEC_MAX],
 }
@@ -147,10 +150,10 @@ impl<'a,T> StackVec<'a, T> where T: 'a {
                 self.stk[STACK_VEC_LAST] = value;
                 let stk = mem::replace(&mut self.stk, unsafe { mem::uninitialized() });
                 let vec_box: Box<[T]> = box stk;
-                self.vec = unsafe { &mut *arena.alloc(UnsafeCell::new(vec_box.into_vec())).get() };
+                self.vec = unsafe { arena.alloc(UnsafeCell::new(vec_box.into_vec())).get() };
                 self.len += 1;
             },
-            _ => self.vec.push(value),
+            _ => unsafe { (*self.vec).push(value) },
         }
     }
 
@@ -159,8 +162,8 @@ impl<'a,T> StackVec<'a, T> where T: 'a {
         match self.len {
             0 => None,
             STACK_VEC_MAX => {
-                let vec = mem::replace(&mut self.vec, unsafe { mem::uninitialized() });
-                Some(&**vec)
+                let vec = unsafe { mem::transmute::<_,&'a mut Vec<_>>(mem::replace(&mut self.vec, mem::uninitialized())) };
+                Some(&vec[])
             },
             l => {
                 let stk = mem::replace(&mut self.stk, unsafe { mem::uninitialized() });
@@ -201,7 +204,7 @@ macro_rules! parse_factor {
             s::UnterminatedStringLiteral => return Err(E::UnterminatedStringLiteral),
             $(
                 $term_token => { $term_lifetime }
-            )*
+            ),*
             _ => return Err(E::ExpectedFactorOrEnd),
         }
     }
@@ -222,7 +225,12 @@ macro_rules! parse_terms {
                 parse_factor!($tokens, $ctx, $terminals, $count_terms, $stack, $terms, $factors, $term, $cont_lifetime, s::VBar => { break 'factor }, $term_token => { break 'term });
             }
             $terms.push($factors.into_slice(&$ctx.factors).unwrap(), &$ctx.vec_terms);
-            $factors = mem::uninitialized();
+            $factors = StackVec {
+                marker: ContravariantLifetime,
+                len: 0,
+                vec: mem::uninitialized(),
+                stk: mem::transmute([Opt(1), Opt(1), Opt(1), Opt(1)]),
+            };
             $factors.len = 0;
         }
         match $stack.pop() {
@@ -249,26 +257,25 @@ macro_rules! parse_expression {
         let mut factors: StackVec<UnsafeCell<ParseFactor>>;
         'expr: loop {
             unsafe {
-                terms = mem::uninitialized();
-                factors = mem::uninitialized();
+                terms = StackVec {
+                    marker: ContravariantLifetime,
+                    len: 0,
+                    vec: mem::uninitialized(),
+                    stk: [mem::transmute((1us,1us)) ; STACK_VEC_MAX ],
+                };
+                factors = StackVec {
+                    marker: ContravariantLifetime,
+                    len: 0,
+                    vec: mem::uninitialized(),
+                    stk: mem::transmute([Opt(1), Opt(1), Opt(1), Opt(1)]),
+                };
                 terms.len = 0;
                 factors.len = 0;
                 loop {
                     match term {
                         ProdEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, (|:_| intrinsics::unreachable()), s::Semi, break 'expr, continue 'expr),
                         OptEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Opt, s::RBracket, break 'expr, continue 'expr),
-                        RepEnd => {
-                            /*$terms.push(mem::transmute(std::raw::Slice { data: 0 as *const _, len: 0 }));
-                            $factors.len = 1;
-                            $anon_factors += 1;
-                            $factors.stk[0] = UnsafeCell::new($expr_type($anon_factors));
-                            $productions.push(UnsafeCell::new((
-                            $stack.push(($terms, $factors, ));
-                            $term = OptEnd;
-                            $count_terms += 1;
-                            $expr_lifetime*/
-                            parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Group, s::RBrace, break 'expr, continue 'expr)
-                        },
+                        RepEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Rep, s::RBrace, break 'expr, continue 'expr),
                         GroupEnd => parse_terms!($tokens, $ctx, $productions, $terminals, $anon_factors, $count_terms, $stack, terms, factors, term, Group, s::RParen, break 'expr, continue 'expr),
                     }
                 }

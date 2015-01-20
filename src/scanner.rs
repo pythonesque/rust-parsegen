@@ -5,7 +5,7 @@ use std::raw::Slice;
 
 pub use self::Token::*;
 
-#[derive(PartialEq)]
+#[derive(Show,PartialEq)]
 pub enum Token<'a> {
     //Ident/*(&'a [Ascii])*/,
     Ident(&'a [Ascii]),
